@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
+import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { parse as parseCsvStream } from "csv-parse";
 import { parse as parseCsvSync } from "csv-parse/sync";
-import type { Options } from "csv-parse";
 import yauzl from "yauzl";
 import type { Entry } from "yauzl";
 import type {
@@ -112,24 +110,17 @@ function decodeEntryName(entry: Entry): string {
   return rawName.toString("utf8");
 }
 
-function csvOptions(onSkip: (err: CsvSkipError) => void): Options {
-  return {
-    columns: true,
-    from_line: 2,
-    skip_empty_lines: true,
-    relax_column_count: true,
-    bom: true,
-    info: true,
-    skip_records_with_error: true,
-    max_record_size: 5_000_000,
-    on_skip: onSkip,
-  } as Options;
+const MAX_RECORD_CHARS = 5_000_000;
+
+function stripTextMarker(raw: string): string {
+  let text = raw.trim();
+  if (text.startsWith("'")) text = text.slice(1).trim();
+  return text;
 }
 
 function parseFiniteNumber(raw: string | undefined): number | null {
   if (raw == null) return null;
-  let text = raw.trim();
-  if (text.startsWith("'")) text = text.slice(1).trim();
+  const text = stripTextMarker(raw);
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)) return null;
   const value = Number(text);
   return Number.isFinite(value) ? value : null;
@@ -147,7 +138,7 @@ function isRealDate(iso: string): boolean {
 
 function calendarDate(ts: string | undefined): string | null {
   if (ts == null) return null;
-  const text = ts.trim();
+  const text = stripTextMarker(ts);
   const match = /^(\d{4}-\d{2}-\d{2})/.exec(text);
   if (match && isRealDate(match[1])) return match[1];
   const epoch = parseFiniteNumber(text);
@@ -159,18 +150,22 @@ function calendarDate(ts: string | undefined): string | null {
 }
 
 function recordedAtFromTimestamp(ts: string): string | null {
-  const text = ts.trim();
+  const text = stripTextMarker(ts);
   if (!text) return null;
   if (/(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(text)) {
     const zoned = new Date(text.includes("T") ? text : text.replace(" ", "T"));
     return Number.isNaN(zoned.getTime()) ? null : zoned.toISOString();
   }
-  const match = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?))?/.exec(text);
+  const match = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2})(\.\d+)?)?$/.exec(text);
   if (match && isRealDate(match[1])) {
-    const time = match[2] ?? "00:00:00";
-    const date = new Date(`${match[1]}T${time}Z`);
-    if (!Number.isNaN(date.getTime())) return date.toISOString();
-    return `${match[1]}T00:00:00.000Z`;
+    if (match[2] == null) return `${match[1]}T00:00:00.000Z`;
+    const hour = Number(match[2]);
+    const minute = Number(match[3]);
+    const second = Number(match[4]);
+    if (hour > 23 || minute > 59 || second > 59) return null;
+    const fraction = match[5] ?? "";
+    const date = new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}${fraction}Z`);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
   }
   const epoch = parseFiniteNumber(text);
   if (epoch != null && Math.abs(epoch) > 1e11) {
@@ -178,6 +173,16 @@ function recordedAtFromTimestamp(ts: string): string | null {
     if (!Number.isNaN(date.getTime())) return date.toISOString();
   }
   return null;
+}
+
+/** Later instant wins. Equal instants keep the row already chosen. */
+function isLaterTimestamp(candidate: string, current: string): boolean {
+  const next = recordedAtFromTimestamp(candidate);
+  const prev = recordedAtFromTimestamp(current);
+  if (next && prev) return next > prev;
+  if (next) return true;
+  if (prev) return false;
+  return stripTextMarker(candidate) > stripTextMarker(current);
 }
 
 function cell(row: Record<string, string>, names: string[]): string | undefined {
@@ -266,58 +271,102 @@ function pushNormalized(
   rows.push({ file, line: unwrapped.line, cells: normalized.cells });
 }
 
-function parseCsvText(csvText: string, file: string): { rows: RawRow[]; errors: ImportError[] } {
-  const rows: RawRow[] = [];
-  const errors: ImportError[] = [];
+interface CsvAccum {
+  rows: RawRow[];
+  errors: ImportError[];
+  header: string[] | null;
+  headerFailed: boolean;
+}
+
+function readHeader(line: string): string[] | null {
   try {
-    const parsed: unknown = parseCsvSync(
-      csvText,
-      csvOptions((err) => {
-        errors.push({
-          file,
-          row: typeof err.lines === "number" ? err.lines : null,
-          message: err.message || "row skipped",
-        });
-      }),
-    );
-    if (Array.isArray(parsed)) {
-      for (const item of parsed) pushNormalized(rows, errors, file, item);
+    const parsed: unknown = parseCsvSync(line, { relax_column_count: true, skip_records_with_error: true });
+    if (!Array.isArray(parsed) || parsed.length === 0 || !Array.isArray(parsed[0])) return null;
+    return (parsed[0] as unknown[]).map((name) => (name == null ? "" : String(name)));
+  } catch {
+    return null;
+  }
+}
+
+function parseDataLine(file: string, lineNo: number, text: string, header: string[], acc: CsvAccum): void {
+  let skipped = false;
+  try {
+    const options = {
+      columns: header,
+      relax_column_count: true,
+      skip_records_with_error: true,
+      on_skip: (err: CsvSkipError) => {
+        skipped = true;
+        acc.errors.push({ file, row: lineNo, message: err.message || "row skipped" });
+      },
+    };
+    const parsed: unknown = parseCsvSync(text, options as Parameters<typeof parseCsvSync>[1]);
+    if (!Array.isArray(parsed)) return;
+    for (const record of parsed) {
+      pushNormalized(acc.rows, acc.errors, file, { record, info: { lines: lineNo } });
     }
   } catch (err) {
-    errors.push({
+    if (skipped) return;
+    acc.errors.push({
       file,
-      row: null,
+      row: lineNo,
       message: err instanceof Error ? err.message : String(err),
     });
   }
-  return { rows, errors };
+}
+
+/** Samsung exports are one record per physical line. Line 1 is metadata; line 2 is the header. */
+function consumeCsvLine(file: string, lineNo: number, text: string, acc: CsvAccum): void {
+  if (lineNo < 2 || text.length === 0) return;
+  if (text.length > MAX_RECORD_CHARS) {
+    acc.errors.push({ file, row: lineNo, message: "Max record size exceeded" });
+    return;
+  }
+  if (!acc.header) {
+    if (acc.headerFailed) return;
+    const header = readHeader(text);
+    if (!header) {
+      acc.headerFailed = true;
+      acc.errors.push({ file, row: lineNo, message: "unparseable header" });
+      return;
+    }
+    acc.header = header;
+    return;
+  }
+  parseDataLine(file, lineNo, text, acc.header, acc);
+}
+
+function emptyCsvAccum(): CsvAccum {
+  return { rows: [], errors: [], header: null, headerFailed: false };
+}
+
+function parseCsvText(csvText: string, file: string): { rows: RawRow[]; errors: ImportError[] } {
+  const normalized = csvText.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const parts = normalized.split("\n");
+  if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+  const acc = emptyCsvAccum();
+  parts.forEach((text, index) => consumeCsvLine(file, index + 1, text, acc));
+  return { rows: acc.rows, errors: acc.errors };
 }
 
 async function parseCsvReadable(stream: Readable, file: string): Promise<{ rows: RawRow[]; errors: ImportError[] }> {
-  const rows: RawRow[] = [];
-  const errors: ImportError[] = [];
-  const parser = parseCsvStream(
-    csvOptions((err) => {
-      errors.push({
-        file,
-        row: typeof err.lines === "number" ? err.lines : null,
-        message: err.message || "row skipped",
-      });
-    }),
-  );
-  parser.on("data", (item: unknown) => {
-    pushNormalized(rows, errors, file, item);
-  });
+  const acc = emptyCsvAccum();
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  let lineNo = 0;
   try {
-    await pipeline(stream, parser);
+    for await (let text of lines) {
+      lineNo += 1;
+      if (lineNo === 1) text = text.replace(/^\uFEFF/, "");
+      consumeCsvLine(file, lineNo, text, acc);
+    }
   } catch (err) {
-    errors.push({
+    acc.errors.push({
       file,
       row: null,
       message: err instanceof Error ? err.message : String(err),
     });
   }
-  return { rows, errors };
+  return { rows: acc.rows, errors: acc.errors };
 }
 
 function capPrimitive(value: unknown): { value: unknown; truncated: boolean } {
@@ -345,18 +394,26 @@ function reduceWeight(rows: RawRow[]): { wins: WeightWin[]; errors: ImportError[
   for (const row of rows) {
     try {
       const startRaw = cell(row.cells, ["start_time", "com.samsung.health.weight.start_time"]);
-      const date = calendarDate(startRaw);
-      if (!date || !startRaw) continue;
       const weightRaw = cell(row.cells, ["weight", "com.samsung.health.weight.weight"]);
+      if (startRaw == null && weightRaw == null) continue;
+      const startTime = startRaw ? stripTextMarker(startRaw) : "";
+      const date = startTime ? calendarDate(startTime) : null;
+      const recordedAt = startTime ? recordedAtFromTimestamp(startTime) : null;
+      if (!date || !recordedAt) {
+        errors.push({ file: row.file, row: row.line || null, message: "unparseable start_time" });
+        continue;
+      }
       const kg = parseFiniteNumber(weightRaw);
-      if (kg == null) continue;
+      if (kg == null) {
+        errors.push({ file: row.file, row: row.line || null, message: "unparseable weight" });
+        continue;
+      }
       if (kg > 100) {
         errors.push({ file: row.file, row: row.line || null, message: "weight above 100 kg skipped" });
         continue;
       }
-      const startTime = startRaw.trim();
       const prev = best.get(date);
-      if (prev && startTime <= prev.startTime) continue;
+      if (prev && !isLaterTimestamp(startTime, prev.startTime)) continue;
 
       const bodyFatRaw = cell(row.cells, ["body_fat", "com.samsung.health.weight.body_fat"]);
       const fatMassRaw = cell(row.cells, ["body_fat_mass", "com.samsung.health.weight.body_fat_mass"]);
@@ -367,7 +424,6 @@ function reduceWeight(rows: RawRow[]): { wins: WeightWin[]; errors: ImportError[
       const muscle = parseFiniteNumber(muscleRaw);
       const water = parseFiniteNumber(waterRaw);
       const datauuid = cell(row.cells, ["datauuid", "com.samsung.health.weight.datauuid"]);
-      const recordedAt = recordedAtFromTimestamp(startTime) ?? `${date}T00:00:00.000Z`;
 
       const original: Record<string, unknown> = {
         recordedAt,
@@ -426,12 +482,20 @@ function reduceSteps(rows: RawRow[]): { days: { date: string; steps: number }[];
       const sourceNumeric = parseFiniteNumber(sourceRaw);
       const sourceText = sourceRaw?.trim().replace(/^'/, "") ?? "";
       if (sourceText !== "-2" && sourceNumeric !== -2) continue;
-      const date =
-        calendarDate(cell(row.cells, ["day_time", "com.samsung.shealth.step_daily_trend.day_time"])) ??
-        calendarDate(cell(row.cells, ["start_time", "com.samsung.shealth.step_daily_trend.start_time"]));
-      if (!date) continue;
-      const count = numericCell(row.cells, ["count", "com.samsung.shealth.step_daily_trend.count"]);
-      if (count == null) continue;
+      const dayRaw =
+        cell(row.cells, ["day_time", "com.samsung.shealth.step_daily_trend.day_time"]) ??
+        cell(row.cells, ["start_time", "com.samsung.shealth.step_daily_trend.start_time"]);
+      const date = calendarDate(dayRaw);
+      if (!date) {
+        errors.push({ file: row.file, row: row.line || null, message: "unparseable date" });
+        continue;
+      }
+      const countRaw = cell(row.cells, ["count", "com.samsung.shealth.step_daily_trend.count"]);
+      const count = parseFiniteNumber(countRaw);
+      if (count == null) {
+        errors.push({ file: row.file, row: row.line || null, message: "unparseable count" });
+        continue;
+      }
       days.set(date, Math.round(count));
     } catch (err) {
       errors.push({
@@ -442,6 +506,17 @@ function reduceSteps(rows: RawRow[]): { days: { date: string; steps: number }[];
     }
   }
   return { days: [...days.entries()].map(([date, steps]) => ({ date, steps })), errors };
+}
+
+function nutritionNumber(row: RawRow, names: string[], errors: ImportError[]): number | null {
+  const raw = cell(row.cells, names);
+  if (raw == null) return null;
+  const value = parseFiniteNumber(raw);
+  if (value == null) {
+    errors.push({ file: row.file, row: row.line || null, message: "unparseable number" });
+    return null;
+  }
+  return value;
 }
 
 function reduceNutrition(rows: RawRow[]): {
@@ -459,7 +534,7 @@ function reduceNutrition(rows: RawRow[]): {
   const errors: ImportError[] = [];
   const acc = new Map<
     string,
-    { calories: number; proteinG: number; carbG: number; fiberG: number; fatG: number; sodiumMg: number; any: boolean }
+    { calories?: number; proteinG?: number; carbG?: number; fiberG?: number; fatG?: number; sodiumMg?: number }
   >();
   for (const row of rows) {
     try {
@@ -469,48 +544,22 @@ function reduceNutrition(rows: RawRow[]): {
         errors.push({ file: row.file, row: row.line || null, message: "unparseable date" });
         continue;
       }
-      const calories = numericCell(row.cells, ["calorie", "com.samsung.health.nutrition.calorie"]);
-      const protein = numericCell(row.cells, ["protein", "com.samsung.health.nutrition.protein"]);
-      const carbs = numericCell(row.cells, ["carbohydrate", "com.samsung.health.nutrition.carbohydrate"]);
-      const fiber = numericCell(row.cells, ["dietary_fiber", "com.samsung.health.nutrition.dietary_fiber"]);
-      const fat = numericCell(row.cells, ["total_fat", "com.samsung.health.nutrition.total_fat"]);
-      const sodium = numericCell(row.cells, ["sodium", "com.samsung.health.nutrition.sodium"]);
+      const calories = nutritionNumber(row, ["calorie", "com.samsung.health.nutrition.calorie"], errors);
+      const protein = nutritionNumber(row, ["protein", "com.samsung.health.nutrition.protein"], errors);
+      const carbs = nutritionNumber(row, ["carbohydrate", "com.samsung.health.nutrition.carbohydrate"], errors);
+      const fiber = nutritionNumber(row, ["dietary_fiber", "com.samsung.health.nutrition.dietary_fiber"], errors);
+      const fat = nutritionNumber(row, ["total_fat", "com.samsung.health.nutrition.total_fat"], errors);
+      const sodium = nutritionNumber(row, ["sodium", "com.samsung.health.nutrition.sodium"], errors);
       if (calories == null && protein == null && carbs == null && fiber == null && fat == null && sodium == null) {
         continue;
       }
-      const bucket = acc.get(date) ?? {
-        calories: 0,
-        proteinG: 0,
-        carbG: 0,
-        fiberG: 0,
-        fatG: 0,
-        sodiumMg: 0,
-        any: false,
-      };
-      if (calories != null) {
-        bucket.calories += calories;
-        bucket.any = true;
-      }
-      if (protein != null) {
-        bucket.proteinG += protein;
-        bucket.any = true;
-      }
-      if (carbs != null) {
-        bucket.carbG += carbs;
-        bucket.any = true;
-      }
-      if (fiber != null) {
-        bucket.fiberG += fiber;
-        bucket.any = true;
-      }
-      if (fat != null) {
-        bucket.fatG += fat;
-        bucket.any = true;
-      }
-      if (sodium != null) {
-        bucket.sodiumMg += sodium;
-        bucket.any = true;
-      }
+      const bucket = acc.get(date) ?? {};
+      if (calories != null) bucket.calories = (bucket.calories ?? 0) + calories;
+      if (protein != null) bucket.proteinG = (bucket.proteinG ?? 0) + protein;
+      if (carbs != null) bucket.carbG = (bucket.carbG ?? 0) + carbs;
+      if (fiber != null) bucket.fiberG = (bucket.fiberG ?? 0) + fiber;
+      if (fat != null) bucket.fatG = (bucket.fatG ?? 0) + fat;
+      if (sodium != null) bucket.sodiumMg = (bucket.sodiumMg ?? 0) + sodium;
       acc.set(date, bucket);
     } catch (err) {
       errors.push({
@@ -520,7 +569,7 @@ function reduceNutrition(rows: RawRow[]): {
       });
     }
   }
-  const days = [...acc.entries()].filter(([, bucket]) => bucket.any).map(([date, bucket]) => {
+  const days = [...acc.entries()].map(([date, bucket]) => {
     const day: {
       date: string;
       calories?: number;
@@ -530,12 +579,12 @@ function reduceNutrition(rows: RawRow[]): {
       fatG?: number;
       sodiumMg?: number;
     } = { date };
-    day.calories = bucket.calories;
-    day.proteinG = bucket.proteinG;
-    day.carbG = bucket.carbG;
-    day.fiberG = bucket.fiberG;
-    day.fatG = bucket.fatG;
-    day.sodiumMg = bucket.sodiumMg;
+    if (bucket.calories != null) day.calories = bucket.calories;
+    if (bucket.proteinG != null) day.proteinG = bucket.proteinG;
+    if (bucket.carbG != null) day.carbG = bucket.carbG;
+    if (bucket.fiberG != null) day.fiberG = bucket.fiberG;
+    if (bucket.fatG != null) day.fatG = bucket.fatG;
+    if (bucket.sodiumMg != null) day.sodiumMg = bucket.sodiumMg;
     return day;
   });
   return { days, errors };
@@ -550,16 +599,25 @@ function sleepHoursFromRows(rows: RawRow[], mode: "last" | "sum"): {
     const days = new Map<string, number>();
     for (const row of rows) {
       try {
-        const date =
-          calendarDate(cell(row.cells, ["end_time", "com.samsung.shealth.sleep_combined.end_time", "com.samsung.shealth.sleep.end_time"])) ??
-          calendarDate(cell(row.cells, ["start_time", "com.samsung.shealth.sleep_combined.start_time", "com.samsung.shealth.sleep.start_time"]));
-        if (!date) continue;
-        const minutes = numericCell(row.cells, [
+        const endRaw = cell(row.cells, ["end_time", "com.samsung.shealth.sleep_combined.end_time", "com.samsung.shealth.sleep.end_time"]);
+        const startRaw = cell(row.cells, ["start_time", "com.samsung.shealth.sleep_combined.start_time", "com.samsung.shealth.sleep.start_time"]);
+        const date = calendarDate(endRaw) ?? calendarDate(startRaw);
+        if (!date) {
+          if (endRaw != null || startRaw != null) {
+            errors.push({ file: row.file, row: row.line || null, message: "unparseable date" });
+          }
+          continue;
+        }
+        const durationRaw = cell(row.cells, [
           "sleep_duration",
           "com.samsung.shealth.sleep_combined.sleep_duration",
           "com.samsung.shealth.sleep.sleep_duration",
         ]);
-        if (minutes == null) continue;
+        const minutes = parseFiniteNumber(durationRaw);
+        if (minutes == null) {
+          errors.push({ file: row.file, row: row.line || null, message: "unparseable sleep_duration" });
+          continue;
+        }
         days.set(date, minutes / 60);
       } catch (err) {
         errors.push({
@@ -575,12 +633,21 @@ function sleepHoursFromRows(rows: RawRow[], mode: "last" | "sum"): {
   const totals = new Map<string, number>();
   for (const row of rows) {
     try {
-      const date =
-        calendarDate(cell(row.cells, ["end_time", "com.samsung.shealth.sleep.end_time"])) ??
-        calendarDate(cell(row.cells, ["start_time", "com.samsung.shealth.sleep.start_time"]));
-      if (!date) continue;
-      const minutes = numericCell(row.cells, ["sleep_duration", "com.samsung.shealth.sleep.sleep_duration"]);
-      if (minutes == null) continue;
+      const endRaw = cell(row.cells, ["end_time", "com.samsung.shealth.sleep.end_time"]);
+      const startRaw = cell(row.cells, ["start_time", "com.samsung.shealth.sleep.start_time"]);
+      const date = calendarDate(endRaw) ?? calendarDate(startRaw);
+      if (!date) {
+        if (endRaw != null || startRaw != null) {
+          errors.push({ file: row.file, row: row.line || null, message: "unparseable date" });
+        }
+        continue;
+      }
+      const durationRaw = cell(row.cells, ["sleep_duration", "com.samsung.shealth.sleep.sleep_duration"]);
+      const minutes = parseFiniteNumber(durationRaw);
+      if (minutes == null) {
+        errors.push({ file: row.file, row: row.line || null, message: "unparseable sleep_duration" });
+        continue;
+      }
       totals.set(date, (totals.get(date) ?? 0) + minutes);
     } catch (err) {
       errors.push({
@@ -682,7 +749,7 @@ function reduceCalories(rows: RawRow[]): { days: CalorieWin[]; errors: ImportErr
       const update =
         cell(row.cells, ["com.samsung.shealth.calories_burned.update_time", "update_time"])?.trim() ?? "";
       const prev = best.get(date);
-      if (prev && update <= prev.update) continue;
+      if (prev && !isLaterTimestamp(update, prev.update)) continue;
       const rest = numericCell(row.cells, ["com.samsung.shealth.calories_burned.rest_calorie", "rest_calorie"]);
       const active = numericCell(row.cells, ["com.samsung.shealth.calories_burned.active_calorie", "active_calorie"]);
       const tef = numericCell(row.cells, ["com.samsung.shealth.calories_burned.tef_calorie", "tef_calorie"]);
@@ -722,7 +789,7 @@ function reduceDaySummary(rows: RawRow[]): { days: SummaryWin[]; errors: ImportE
       if (!date) continue;
       const update = cell(row.cells, ["update_time", "com.samsung.shealth.activity.day_summary.update_time"])?.trim() ?? "";
       const prev = best.get(date);
-      if (prev && update <= prev.update) continue;
+      if (prev && !isLaterTimestamp(update, prev.update)) continue;
       const walkMs = numericCell(row.cells, ["walk_time", "com.samsung.shealth.activity.day_summary.walk_time"]);
       const exerciseMs = numericCell(row.cells, ["exercise_time", "com.samsung.shealth.activity.day_summary.exercise_time"]);
       const active = numericCell(row.cells, ["calorie", "com.samsung.shealth.activity.day_summary.calorie"]);
@@ -919,6 +986,7 @@ function buildDraft(files: LoadedFile[], extraErrors: ImportError[]): SamsungImp
     draft.duplicatesSkipped += reduced.duplicatesSkipped;
     for (const workout of reduced.workouts) {
       if (seen.has(workout.sourceId)) {
+        draft.duplicatesSkipped += 1;
         const index = workouts.findIndex((item) => item.sourceId === workout.sourceId);
         if (index >= 0) workouts[index] = workout;
       } else {
@@ -934,12 +1002,12 @@ function buildDraft(files: LoadedFile[], extraErrors: ImportError[]): SamsungImp
   for (const step of steps.days) ensureDay(days, step.date).steps = step.steps;
   for (const meal of nutrition.days) {
     const day = ensureDay(days, meal.date);
-    day.calories = meal.calories;
-    day.proteinG = meal.proteinG;
-    day.carbG = meal.carbG;
-    day.fatG = meal.fatG;
-    day.fiberG = meal.fiberG;
-    day.sodiumMg = meal.sodiumMg;
+    if (meal.calories != null) day.calories = meal.calories;
+    if (meal.proteinG != null) day.proteinG = meal.proteinG;
+    if (meal.carbG != null) day.carbG = meal.carbG;
+    if (meal.fatG != null) day.fatG = meal.fatG;
+    if (meal.fiberG != null) day.fiberG = meal.fiberG;
+    if (meal.sodiumMg != null) day.sodiumMg = meal.sodiumMg;
   }
   for (const night of sleep.days) ensureDay(days, night.date).sleepHours = night.sleepHours;
   for (const burned of calories.days) {
@@ -959,18 +1027,22 @@ function buildDraft(files: LoadedFile[], extraErrors: ImportError[]): SamsungImp
     const day = ensureDay(days, date);
     let minutes = 0;
     let caloriesSum = 0;
+    let sawDuration = false;
     let sawCalories = false;
     let resistance = false;
     for (const session of sessions) {
       addSourceId(day, session.sourceId);
-      if (session.durationMin != null) minutes += session.durationMin;
+      if (session.durationMin != null) {
+        minutes += session.durationMin;
+        sawDuration = true;
+      }
       if (session.calories != null) {
         caloriesSum += session.calories;
         sawCalories = true;
       }
       if (session.exerciseType === RESISTANCE_EXERCISE_TYPE) resistance = true;
     }
-    day.workoutMinutes = minutes;
+    if (sawDuration) day.workoutMinutes = minutes;
     if (sawCalories) day.exerciseCalories = caloriesSum;
     day.resistanceTraining = resistance;
   }

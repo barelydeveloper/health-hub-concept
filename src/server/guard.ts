@@ -1,17 +1,31 @@
 import { ZodError, type ZodType } from "zod";
 import type { AuthContext, Scope } from "./auth";
-import { authenticate } from "./auth";
+import { authenticate, touchApiToken } from "./auth";
 import { beginIdempotency, finishIdempotency, releaseIdempotency } from "./idempotency";
 import { apiError } from "./http";
 import { consumeRate } from "./rate-limit";
 
+export function authDecision(hasUser: boolean, underRateLimit: boolean, hasScope: boolean): 200 | 401 | 403 | 429 {
+  if (!hasUser) return 401;
+  if (!underRateLimit) return 429;
+  if (!hasScope) return 403;
+  return 200;
+}
+
 export async function withAuth(req: Request, scope: Scope, fn: (ctx: AuthContext) => Promise<Response>): Promise<Response> {
-  const ctx = await authenticate(req);
-  if (!ctx) return apiError(401, "unauthorized", "Authentication is required.");
-  if (!ctx.scopes.includes(scope)) return apiError(403, "forbidden", `The token is missing the ${scope} scope.`);
-  const bucket = ctx.tokenId ?? `session:${ctx.userId}`;
-  if (!consumeRate(bucket)) return apiError(429, "rate_limited", "Too many requests.");
-  return fn(ctx);
+  try {
+    const ctx = await authenticate(req, { touch: false });
+    const underRateLimit = ctx ? consumeRate(ctx.tokenId ?? `session:${ctx.userId}`) : false;
+    const decision = authDecision(ctx != null, underRateLimit, ctx?.scopes.includes(scope) ?? false);
+    if (!ctx || decision === 401) return apiError(401, "unauthorized", "Authentication is required.");
+    if (decision === 429) return apiError(429, "rate_limited", "Too many requests.");
+    if (decision === 403) return apiError(403, "forbidden", `The token is missing the ${scope} scope.`);
+    if (ctx.tokenId) await touchApiToken(ctx.tokenId);
+    return await fn(ctx);
+  } catch (error) {
+    console.error(error);
+    return apiError(500, "internal_error", "The request failed.");
+  }
 }
 
 export function parseBody<T>(schema: ZodType<T>, body: unknown): { ok: true; data: T } | { ok: false; response: Response } {
@@ -58,7 +72,12 @@ export async function withWrite(
         await releaseIdempotency(ctx.userId, claim.key);
         return response;
       }
-      return finishIdempotency(ctx.userId, claim.key, response);
+      try {
+        return await finishIdempotency(ctx.userId, claim.key, response);
+      } catch (error) {
+        console.error(error);
+        return response;
+      }
     } catch (error) {
       console.error(error);
       await releaseIdempotency(ctx.userId, claim.key);

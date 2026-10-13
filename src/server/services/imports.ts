@@ -1,5 +1,12 @@
 import type { Prisma, ValueOrigin } from "@prisma/client";
 import { planImportMerge } from "@/domain/import/merge";
+import {
+  activityStoredFields,
+  hasStoredActivity,
+  hasStoredNutrition,
+  nutritionStoredFields,
+  scaleImportedNumber,
+} from "@/domain/import/scale";
 import type { ExistingRecord } from "@/domain/import/types";
 import type { SamsungDay, SamsungImportDraft, SamsungWorkout } from "@/domain/import/types";
 import type { AuthContext } from "../auth";
@@ -15,15 +22,21 @@ function mergeOrigin(origin: ValueOrigin): ExistingRecord["valueOrigin"] {
 }
 
 async function applyMetric(userId: string, kind: "weight" | "body_fat_percent" | "fat_mass" | "skeletal_muscle", value: number, recordedAt: Date, sourceId: string, group: string) {
-  const hash = contentHash({ kind, value, recordedAt: recordedAt.toISOString() });
+  const stored = scaleImportedNumber(value, 3);
+  const hash = contentHash({ kind, value: stored, recordedAt: recordedAt.toISOString() });
   const existing = await prisma.bodyMetric.findFirst({
     where: { userId, sourceSystem: "samsung_health", sourceId, kind, supersededAt: null, deletedAt: null },
   });
+  const existingValue = existing ? dec(existing.value) : null;
   const incoming = { sourceSystem: "samsung_health", sourceId, contentHash: hash };
   const plan = planImportMerge(existing ? [{
     sourceSystem: "samsung_health",
     sourceId,
-    contentHash: contentHash({ kind, value: dec(existing.value), recordedAt: existing.recordedAt.toISOString() }),
+    contentHash: contentHash({
+      kind,
+      value: existingValue == null ? null : scaleImportedNumber(existingValue, 3),
+      recordedAt: existing.recordedAt.toISOString(),
+    }),
     valueOrigin: mergeOrigin(existing.valueOrigin),
     superseded: false,
   }] : [], [incoming]);
@@ -37,9 +50,9 @@ async function applyMetric(userId: string, kind: "weight" | "body_fat_percent" |
     data: {
       userId,
       kind,
-      value,
+      value: stored,
       canonicalUnit: kind === "body_fat_percent" ? "percent" : "lb",
-      originalValue: value,
+      originalValue: stored,
       originalUnit: kind === "body_fat_percent" ? "percent" : "lb",
       valueOrigin: "imported",
       recordedAt,
@@ -53,15 +66,21 @@ async function applyMetric(userId: string, kind: "weight" | "body_fat_percent" |
 }
 
 async function applyWater(userId: string, value: number, recordedAt: Date, sourceId: string, group: string) {
-  const hash = contentHash({ kind: "body_water", value, recordedAt: recordedAt.toISOString() });
+  const stored = scaleImportedNumber(value, 3);
+  const hash = contentHash({ kind: "body_water", value: stored, recordedAt: recordedAt.toISOString() });
   const existing = await prisma.bodyWaterReading.findFirst({
     where: { userId, sourceSystem: "samsung_health", sourceId, supersededAt: null, deletedAt: null },
   });
+  const existingValue = existing ? dec(existing.valueLb) : null;
   const incoming = { sourceSystem: "samsung_health", sourceId, contentHash: hash };
   const plan = planImportMerge(existing ? [{
     sourceSystem: "samsung_health",
     sourceId,
-    contentHash: contentHash({ kind: "body_water", value: dec(existing.valueLb), recordedAt: existing.recordedAt.toISOString() }),
+    contentHash: contentHash({
+      kind: "body_water",
+      value: existingValue == null ? null : scaleImportedNumber(existingValue, 3),
+      recordedAt: existing.recordedAt.toISOString(),
+    }),
     valueOrigin: mergeOrigin(existing.valueOrigin),
     superseded: false,
   }] : [], [incoming]);
@@ -70,8 +89,8 @@ async function applyWater(userId: string, value: number, recordedAt: Date, sourc
   await prisma.bodyWaterReading.create({
     data: {
       userId,
-      valueLb: value,
-      originalValue: value,
+      valueLb: stored,
+      originalValue: stored,
       originalUnit: "lb",
       valueOrigin: "imported",
       recordedAt,
@@ -99,14 +118,18 @@ async function applyDay(userId: string, day: SamsungDay, counts: Record<string, 
     counts[await applyMetric(userId, kind, value, recordedAt, `${base}:${kind}`, group)] += 1;
   }
   if (day.bodyWaterLb != null) counts[await applyWater(userId, day.bodyWaterLb, recordedAt, `${base}:body_water`, group)] += 1;
-  if (day.steps != null || day.activeCalories != null || day.workoutMinutes != null || day.walkMinutes != null) {
+  const activity = activityStoredFields(day);
+  if (hasStoredActivity(activity)) {
     const sourceId = `${day.date}:activity`;
-    const hash = contentHash({ steps: day.steps ?? null, active: day.activeCalories ?? null, minutes: day.workoutMinutes ?? null });
+    const hash = contentHash(activity);
     const existing = await prisma.activityDay.findFirst({ where: { userId, sourceSystem: "samsung_health", sourceId, supersededAt: null, deletedAt: null } });
-    const plan = planImportMerge(existing ? [{
+    const existingActivity = existing
+      ? activityStoredFields({ steps: existing.steps, activeCalories: dec(existing.activeCalories), workoutMinutes: dec(existing.workoutMinutes) })
+      : null;
+    const plan = planImportMerge(existing && existingActivity ? [{
       sourceSystem: "samsung_health",
       sourceId,
-      contentHash: contentHash({ steps: existing.steps, active: dec(existing.activeCalories), minutes: dec(existing.workoutMinutes) }),
+      contentHash: contentHash(existingActivity),
       valueOrigin: mergeOrigin(existing.valueOrigin),
       superseded: false,
     }] : [], [{ sourceSystem: "samsung_health", sourceId, contentHash: hash }]);
@@ -116,9 +139,9 @@ async function applyDay(userId: string, day: SamsungDay, counts: Record<string, 
         data: {
           userId,
           recordedOn: new Date(`${day.date}T00:00:00.000Z`),
-          steps: day.steps ?? null,
-          activeCalories: day.activeCalories ?? null,
-          workoutMinutes: day.workoutMinutes ?? null,
+          steps: activity.steps,
+          activeCalories: activity.active,
+          workoutMinutes: activity.minutes,
           valueOrigin: "imported",
           sourceSystem: "samsung_health",
           sourceId,
@@ -131,11 +154,13 @@ async function applyDay(userId: string, day: SamsungDay, counts: Record<string, 
   if (day.sleepHours != null) {
     const sourceId = `${day.date}:sleep`;
     const existing = await prisma.sleepSession.findFirst({ where: { userId, sourceSystem: "samsung_health", sourceId, supersededAt: null, deletedAt: null } });
-    const hash = contentHash({ hours: day.sleepHours });
+    const hours = scaleImportedNumber(day.sleepHours, 3);
+    const hash = contentHash({ hours });
+    const existingHours = existing ? dec(existing.durationHours) : null;
     const plan = planImportMerge(existing ? [{
       sourceSystem: "samsung_health",
       sourceId,
-      contentHash: contentHash({ hours: dec(existing.durationHours) }),
+      contentHash: contentHash({ hours: existingHours == null ? null : scaleImportedNumber(existingHours, 3) }),
       valueOrigin: mergeOrigin(existing.valueOrigin),
       superseded: false,
     }] : [], [{ sourceSystem: "samsung_health", sourceId, contentHash: hash }]);
@@ -145,7 +170,7 @@ async function applyDay(userId: string, day: SamsungDay, counts: Record<string, 
         data: {
           userId,
           startedAt: recordedAt,
-          durationHours: day.sleepHours,
+          durationHours: hours,
           valueOrigin: "imported",
           sourceSystem: "samsung_health",
           sourceId,
@@ -155,14 +180,25 @@ async function applyDay(userId: string, day: SamsungDay, counts: Record<string, 
       counts[existing ? "revised" : "added"] += 1;
     } else counts[plan.keepUserCorrection.length ? "kept" : "skipped"] += 1;
   }
-  if (day.calories != null || day.proteinG != null) {
+  const nutrition = nutritionStoredFields(day);
+  if (hasStoredNutrition(nutrition)) {
     const sourceId = `${day.date}:nutrition`;
     const existing = await prisma.nutritionEntry.findFirst({ where: { userId, sourceSystem: "samsung_health", sourceId, supersededAt: null, deletedAt: null } });
-    const hash = contentHash({ calories: day.calories ?? null, protein: day.proteinG ?? null, carbs: day.carbG ?? null, fat: day.fatG ?? null });
-    const plan = planImportMerge(existing ? [{
+    const hash = contentHash(nutrition);
+    const existingNutrition = existing
+      ? nutritionStoredFields({
+          calories: dec(existing.calories),
+          proteinG: dec(existing.proteinG),
+          carbG: dec(existing.carbG),
+          fatG: dec(existing.fatG),
+          fiberG: dec(existing.fiberG),
+          sodiumMg: dec(existing.sodiumMg),
+        })
+      : null;
+    const plan = planImportMerge(existing && existingNutrition ? [{
       sourceSystem: "samsung_health",
       sourceId,
-      contentHash: contentHash({ calories: dec(existing.calories), protein: dec(existing.proteinG), carbs: dec(existing.carbG), fat: dec(existing.fatG) }),
+      contentHash: contentHash(existingNutrition),
       valueOrigin: mergeOrigin(existing.valueOrigin),
       superseded: false,
     }] : [], [{ sourceSystem: "samsung_health", sourceId, contentHash: hash }]);
@@ -173,12 +209,12 @@ async function applyDay(userId: string, day: SamsungDay, counts: Record<string, 
           userId,
           recordedAt,
           name: "Samsung Health nutrition",
-          calories: day.calories ?? null,
-          proteinG: day.proteinG ?? null,
-          carbG: day.carbG ?? null,
-          fatG: day.fatG ?? null,
-          fiberG: day.fiberG ?? null,
-          sodiumMg: day.sodiumMg ?? null,
+          calories: nutrition.calories,
+          proteinG: nutrition.protein,
+          carbG: nutrition.carbs,
+          fatG: nutrition.fat,
+          fiberG: nutrition.fiber,
+          sodiumMg: nutrition.sodium,
           valueOrigin: "imported",
           sourceSystem: "samsung_health",
           sourceId,

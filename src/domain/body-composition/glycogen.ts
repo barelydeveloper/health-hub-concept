@@ -22,16 +22,16 @@ export interface GlycogenRefillResult {
   version: "glycogen-refill-v1";
   heuristic: true;
   limitations: string[];
-  glycogenLb: number;
-  associatedWaterLowLb: number;
-  associatedWaterMidLb: number;
-  associatedWaterHighLb: number;
-  projectedWeightLowLb: number;
-  projectedWeightMidLb: number;
-  projectedWeightHighLb: number;
-  projectedBodyFatLowPercent: number;
-  projectedBodyFatMidPercent: number;
-  projectedBodyFatHighPercent: number;
+  glycogenLb: number | null;
+  associatedWaterLowLb: number | null;
+  associatedWaterMidLb: number | null;
+  associatedWaterHighLb: number | null;
+  projectedWeightLowLb: number | null;
+  projectedWeightMidLb: number | null;
+  projectedWeightHighLb: number | null;
+  projectedBodyFatLowPercent: number | null;
+  projectedBodyFatMidPercent: number | null;
+  projectedBodyFatHighPercent: number | null;
 }
 
 const GLYCOGEN_LIMITATIONS = [
@@ -39,9 +39,32 @@ const GLYCOGEN_LIMITATIONS = [
   "The default associated-water ratio is 2.7–4.0 grams of water per gram of glycogen.",
 ];
 
-function projectedBodyFatPercent(referenceFatMassLb: number, projectedWeightLb: number): number {
-  if (projectedWeightLb <= 0) return Number.NaN;
+function projectedBodyFatPercent(
+  referenceFatMassLb: number,
+  projectedWeightLb: number,
+): number | null {
+  if (!Number.isFinite(projectedWeightLb) || projectedWeightLb <= 0 || !Number.isFinite(referenceFatMassLb)) {
+    return null;
+  }
   return (referenceFatMassLb / projectedWeightLb) * 100;
+}
+
+function emptyGlycogenResult(): GlycogenRefillResult {
+  return {
+    version: GLYCOGEN_VERSION,
+    heuristic: true,
+    limitations: [...GLYCOGEN_LIMITATIONS],
+    glycogenLb: null,
+    associatedWaterLowLb: null,
+    associatedWaterMidLb: null,
+    associatedWaterHighLb: null,
+    projectedWeightLowLb: null,
+    projectedWeightMidLb: null,
+    projectedWeightHighLb: null,
+    projectedBodyFatLowPercent: null,
+    projectedBodyFatMidPercent: null,
+    projectedBodyFatHighPercent: null,
+  };
 }
 
 /**
@@ -53,6 +76,16 @@ export function estimateGlycogenRefill(input: GlycogenRefillInput): GlycogenRefi
   const waterRatioLow = input.waterRatioLow ?? GLYCOGEN_WATER_RATIO_LOW;
   const waterRatioHigh = input.waterRatioHigh ?? GLYCOGEN_WATER_RATIO_HIGH;
   const extraWaterLb = input.extraWaterLb ?? 0;
+  if (
+    !Number.isFinite(input.depletedWeightLb) ||
+    !Number.isFinite(input.referenceFatMassLb) ||
+    !Number.isFinite(input.glycogenG) ||
+    !Number.isFinite(waterRatioLow) ||
+    !Number.isFinite(waterRatioHigh) ||
+    !Number.isFinite(extraWaterLb)
+  ) {
+    return emptyGlycogenResult();
+  }
   const waterRatioMid = (waterRatioLow + waterRatioHigh) / 2;
 
   const glycogenLb = input.glycogenG / GRAMS_PER_LB;

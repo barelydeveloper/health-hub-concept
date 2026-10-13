@@ -55,11 +55,11 @@ export default function ImportsPage() {
         <p className="mt-3 text-sm text-muted">Unknown files are reported and not parsed. A repeated export skips unchanged rows and will not overwrite a corrected record.</p>
       </Panel>
       <Panel title="Recent batches">
-        {query.error ? <p>{query.error.message}</p> : query.isLoading || !query.data ? <p>Loading…</p> : query.data.data.length === 0 ? <p className="text-sm text-muted">No imports yet.</p> : query.data.data.map((batch) => (
+        {query.error ? <p role="alert">{query.error.message}</p> : query.isLoading || !query.data ? <p>Loading…</p> : query.data.data.length === 0 ? <p className="text-sm text-muted">No imports yet.</p> : query.data.data.map((batch) => (
           <article key={batch.id} className="border-t border-line py-3 text-sm">
             <p>{batch.startedAt.slice(0, 16).replace("T", " ")} — {batch.status}</p>
-            <p>Added {batch.summary?.added ?? 0}, skipped {batch.summary?.skipped ?? 0}, revised {batch.summary?.revised ?? 0}, kept {batch.summary?.keptCorrections ?? 0}.</p>
-            {batch.errors.slice(0, 5).map((error) => <p key={`${error.file}${error.message}`} className="text-muted">{error.file}: {error.message}</p>)}
+            {batch.summary == null ? <p>Summary unavailable ({batch.status}).</p> : <p>Added {batch.summary.added ?? 0}, skipped {batch.summary.skipped ?? 0}, revised {batch.summary.revised ?? 0}, kept {batch.summary.keptCorrections ?? 0}.</p>}
+            {(batch.errors ?? []).slice(0, 5).map((error) => <p key={`${error.file}${error.message}`} className="text-muted">{error.file}: {error.message}</p>)}
           </article>
         ))}
       </Panel>

@@ -2,8 +2,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { planImportMerge } from "../merge";
 import { UNSUPPORTED_ADAPTERS, selectAdapter } from "../registry";
+import { activityStoredFields, hasStoredActivity, hasStoredNutrition, nutritionStoredFields, scaleImportedNumber } from "../scale";
 import { KG_TO_LB, M_TO_MI, MS_TO_MPH, parseSamsungCsv, parseSamsungFiles, parseSamsungZip } from "./parse";
 
 const fixtureDir = path.resolve(process.cwd(), "fixtures/samsung");
@@ -533,5 +535,271 @@ describe("samsung sleep, calories, profile, and live data", () => {
     expect(draft.days).toEqual([]);
     expect(draft.workouts).toEqual([]);
     expect(draft.discovered.every((file) => file.supported)).toBe(true);
+  });
+});
+
+describe("samsung malformed rows and timestamps", () => {
+  it("rejects invalid clocks and trailing garbage instead of storing midnight", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.shealth.exercise.csv",
+        text: [
+          "exercise",
+          "datauuid,exercise_type,start_time,duration,distance,calorie",
+          "bad-clock,1001,2026-06-05 99:99:99,60000,10,1",
+          "bad-tail,1001,2026-06-06 garbage,60000,10,1",
+          "ok,1001,2026-06-07 10:00:00,60000,10,1",
+          "quoted,1001,'2026-06-08 10:00:00,60000,10,1",
+          "offset,1001,2026-06-09 10:00:00-04:00,60000,10,1",
+        ].join("\n"),
+      },
+    ]);
+    expect(draft.workouts.map((workout) => workout.sourceId).sort()).toEqual(["offset", "ok", "quoted"]);
+    expect(draft.workouts.find((workout) => workout.sourceId === "bad-clock")).toBeUndefined();
+    expect(draft.workouts.find((workout) => workout.sourceId === "bad-tail")).toBeUndefined();
+    expect(draft.workouts.find((workout) => workout.sourceId === "ok")?.startedAt).toBe("2026-06-07T10:00:00.000Z");
+    expect(draft.workouts.find((workout) => workout.sourceId === "quoted")?.startedAt).toBe("2026-06-08T10:00:00.000Z");
+    expect(draft.workouts.find((workout) => workout.sourceId === "offset")?.startedAt).toBe("2026-06-09T14:00:00.000Z");
+    expect(draft.workouts.some((workout) => workout.startedAt.endsWith("T00:00:00.000Z"))).toBe(false);
+    expect(draft.errors.filter((error) => error.message === "unparseable start_time")).toHaveLength(2);
+  });
+
+  it("keeps valid weight rows when other rows have a bad time or a bad number", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.health.weight.csv",
+        text: [
+          "weight",
+          "start_time,weight,datauuid",
+          "2026-06-01 99:99:99,70,bad-time",
+          "2026-06-02 08:00:00,71,good",
+          "2026-06-03 08:00:00,70.5 kg,bad-number",
+          "not-a-date,72,bad-date",
+          "2026-06-04 08:00:00,,missing",
+        ].join("\n"),
+      },
+    ]);
+    expect(draft.days.map((day) => day.date)).toEqual(["2026-06-02"]);
+    expect(draft.days[0]?.weightLb).toBe(71 * KG_TO_LB);
+    expect(draft.days[0]?.sourceIds).toEqual(["good"]);
+    expect(draft.errors).toEqual([
+      { file: "com.samsung.health.weight.csv", row: 3, message: "unparseable start_time" },
+      { file: "com.samsung.health.weight.csv", row: 5, message: "unparseable weight" },
+      { file: "com.samsung.health.weight.csv", row: 6, message: "unparseable start_time" },
+      { file: "com.samsung.health.weight.csv", row: 7, message: "unparseable weight" },
+    ]);
+  });
+
+  it("reports a steps aggregate row whose count is not a number and keeps the earlier value", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.shealth.step_daily_trend.csv",
+        text: ["steps", "source_type,day_time,count", "-2,2026-08-01,10", "-2,2026-08-01,=1+1", "-2,2026-08-02,nope", "0,2026-08-02,9999"].join("\n"),
+      },
+    ]);
+    expect(draft.days).toEqual([{ date: "2026-08-01", sourceIds: [], steps: 10 }]);
+    expect(draft.errors.map((error) => error.message)).toEqual(["unparseable count", "unparseable count"]);
+  });
+
+  it("keeps a valid sleep session when another row has a bad duration", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.shealth.sleep.csv",
+        text: [
+          "sleep",
+          "end_time,start_time,sleep_duration",
+          "2026-06-04 06:00:00,2026-06-04 04:00:00,30",
+          "2026-06-04 03:00:00,2026-06-03 23:00:00,nope",
+        ].join("\n"),
+      },
+    ]);
+    expect(draft.days[0]?.sleepHours).toBe(30 / 60);
+    expect(draft.errors).toEqual([
+      { file: "com.samsung.shealth.sleep.csv", row: 4, message: "unparseable sleep_duration" },
+    ]);
+  });
+
+  it("sums valid nutrition cells when another cell on the row is not a number", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.health.nutrition.csv",
+        text: ["nutrition", "start_time,calorie,protein", "2026-06-03 08:00:00,100,=1+1", "2026-06-03 13:00:00,50,4"].join("\n"),
+      },
+    ]);
+    expect(draft.days[0]).toMatchObject({ date: "2026-06-03", calories: 150, proteinG: 4 });
+    expect(draft.days[0]?.carbG).toBeUndefined();
+    expect(draft.days[0]?.fatG).toBeUndefined();
+    expect(draft.days[0]?.fiberG).toBeUndefined();
+    expect(draft.days[0]?.sodiumMg).toBeUndefined();
+    expect(draft.errors).toEqual([{ file: "com.samsung.health.nutrition.csv", row: 3, message: "unparseable number" }]);
+  });
+
+  it("does not fill absent nutrition columns with zero", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.health.nutrition.csv",
+        text: ["nutrition", "start_time,dietary_fiber", "2026-06-03 08:00:00,4.5", "2026-06-04 08:00:00,0"].join("\n"),
+      },
+    ]);
+    expect(draft.errors).toEqual([]);
+    expect(draft.days).toEqual([
+      { date: "2026-06-03", sourceIds: [], fiberG: 4.5 },
+      { date: "2026-06-04", sourceIds: [], fiberG: 0 },
+    ]);
+    const stored = nutritionStoredFields(draft.days[0]!);
+    expect(stored.calories).toBeNull();
+    expect(stored.fiber).toBe(4.5);
+    expect(hasStoredNutrition(nutritionStoredFields(draft.days[1]!))).toBe(true);
+  });
+
+  it("orders same-day rows by instant instead of raw timestamp text", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.health.weight.csv",
+        text: [
+          "weight",
+          "start_time,weight,datauuid",
+          "2026-06-01 12:00:00,70,early-utc",
+          "2026-06-01 09:30:00-04:00,71,later-offset",
+          "2026-06-02 09:30:00,71,plain",
+          "2026-06-02 09:30:00.000,70,millis",
+        ].join("\n"),
+      },
+      {
+        name: "com.samsung.shealth.calories_burned.details.csv",
+        text: [
+          "calories",
+          "day_time,update_time,rest_calorie,active_calorie",
+          "2026-07-01,2026-07-01 12:00:00,1000,100",
+          "2026-07-01,2026-07-01 09:30:00-04:00,1400,300",
+        ].join("\n"),
+      },
+      {
+        name: "com.samsung.shealth.activity.day_summary.csv",
+        text: [
+          "summary",
+          "day_time,update_time,step_count,calorie,exercise_time,walk_time",
+          "2026-07-02,2026-07-02 12:00:00,100,10,60000,60000",
+          "2026-07-02,2026-07-02 09:00:00-04:00,200,20,120000,120000",
+        ].join("\n"),
+      },
+    ]);
+    const june1 = draft.days.find((day) => day.date === "2026-06-01");
+    expect(june1?.sourceIds).toEqual(["later-offset"]);
+    expect(june1?.weightLb).toBe(71 * KG_TO_LB);
+    expect(june1?.original).toMatchObject({ recordedAt: "2026-06-01T13:30:00.000Z" });
+    expect(draft.days.find((day) => day.date === "2026-06-02")?.sourceIds).toEqual(["plain"]);
+    expect(draft.days.find((day) => day.date === "2026-07-01")).toMatchObject({
+      bmr: 1400,
+      activeCalories: 300,
+      burnedCalories: 1700,
+    });
+    expect(draft.days.find((day) => day.date === "2026-07-02")).toMatchObject({
+      steps: 200,
+      activeCalories: 20,
+      workoutMinutes: 2,
+      walkMinutes: 2,
+    });
+  });
+
+  it("keeps valid rows that follow an unclosed quote", async () => {
+    const text = [
+      "weight",
+      "start_time,weight,datauuid",
+      "2026-06-01 08:00:00,70,before",
+      '"unterminated,80,bad',
+      "2026-06-03 08:00:00,72,after",
+    ].join("\n");
+    const draft = await parseSamsungFiles([{ name: "com.samsung.health.weight.csv", text }]);
+    expect(draft.days.map((day) => day.date)).toEqual(["2026-06-01", "2026-06-03"]);
+    expect(draft.days.map((day) => day.sourceIds[0])).toEqual(["before", "after"]);
+    expect(draft.errors).toEqual([
+      expect.objectContaining({
+        file: "com.samsung.health.weight.csv",
+        row: 4,
+        message: expect.stringMatching(/quote/i),
+      }),
+    ]);
+
+    const zipped = await parseSamsungZip(zipStored([{ name: "com.samsung.health.weight.csv", data: Buffer.from(text) }]));
+    expect(zipped.days.map((day) => day.date)).toEqual(["2026-06-01", "2026-06-03"]);
+    expect(zipped.errors.some((error) => error.row === 4 && /quote/i.test(error.message))).toBe(true);
+  });
+
+  it("does not invent workout minutes for a distance-only session", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.shealth.exercise.csv",
+        text: [
+          "exercise",
+          "datauuid,exercise_type,start_time,duration,distance,calorie",
+          "walk,1001,2026-06-05 10:00:00,0,1609.344,10",
+        ].join("\n"),
+      },
+    ]);
+    expect(draft.errors).toEqual([]);
+    expect(draft.workouts).toHaveLength(1);
+    expect(draft.workouts[0]).toMatchObject({
+      durationMin: null,
+      distanceMi: 1609.344 * M_TO_MI,
+      calories: 10,
+    });
+    const day = draft.days[0];
+    expect(day?.workoutMinutes).toBeUndefined();
+    expect(day?.exerciseCalories).toBe(10);
+    expect(hasStoredActivity(activityStoredFields(day!))).toBe(false);
+  });
+
+  it("counts the same workout id from a later file", async () => {
+    const draft = await parseSamsungFiles([
+      {
+        name: "com.samsung.shealth.exercise.csv",
+        text: ["exercise", "datauuid,exercise_type,start_time,duration,distance,calorie", "same,1001,2026-06-05 10:00:00,60000,10,1"].join("\n"),
+      },
+      {
+        name: "com.samsung.shealth.exercise.20260605120000.csv",
+        text: ["exercise", "datauuid,exercise_type,start_time,duration,distance,calorie", "same,1002,2026-06-05 11:00:00,120000,20,9"].join("\n"),
+      },
+    ]);
+    expect(draft.duplicatesSkipped).toBe(1);
+    expect(draft.workouts).toHaveLength(1);
+    expect(draft.workouts[0]).toMatchObject({ sourceId: "same", exerciseType: 1002, calories: 9, startedAt: "2026-06-05T11:00:00.000Z" });
+  });
+});
+
+describe("stored import values", () => {
+  it("rounds to the decimal scale a repeat import will read back", () => {
+    const pounds = scaleImportedNumber(70 * KG_TO_LB, 3);
+    expect(pounds).toBe(154.324);
+    expect(scaleImportedNumber(1000 / 60000, 2)).toBe(0.02);
+    expect(scaleImportedNumber(7 / 60, 3)).toBe(0.117);
+    expect(scaleImportedNumber(0.1 + 0.2, 2)).toBe(0.3);
+    const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    expect(hash({ kind: "weight", value: pounds })).toBe(hash({ kind: "weight", value: 154.324 }));
+    expect(hash({ kind: "weight", value: 70 * KG_TO_LB })).not.toBe(hash({ kind: "weight", value: pounds }));
+  });
+
+  it("does not treat walk minutes alone as a stored activity row", () => {
+    const walkOnly = activityStoredFields({ walkMinutes: 2 });
+    expect(walkOnly).toEqual({ steps: null, active: null, minutes: null });
+    expect(hasStoredActivity(walkOnly)).toBe(false);
+    expect(activityStoredFields({ steps: 10, activeCalories: 10.126, workoutMinutes: 1000 / 60000 })).toEqual({
+      steps: 10,
+      active: 10.13,
+      minutes: 0.02,
+    });
+  });
+
+  it("includes fiber and sodium in the nutrition identity", () => {
+    const stored = nutritionStoredFields({ calories: 100, proteinG: 1, fiberG: 0.1 + 0.2, sodiumMg: 10.126 });
+    expect(stored).toEqual({
+      calories: 100,
+      protein: 1,
+      carbs: null,
+      fat: null,
+      fiber: 0.3,
+      sodium: 10.13,
+    });
+    expect(Object.keys(stored)).toEqual(["calories", "protein", "carbs", "fat", "fiber", "sodium"]);
   });
 });

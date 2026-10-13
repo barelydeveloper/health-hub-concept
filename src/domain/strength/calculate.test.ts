@@ -285,6 +285,21 @@ describe("volume, reps, and personal records", () => {
     );
     expect(summary.conventionalVolumeLb).toBe(640);
     expect(summary.totalReps).toBe(16);
+    expect(summary.bestReps).toBe(8);
+
+    const records = personalRecords(
+      [
+        session("row-day", "2026-03-01T15:00:00.000Z", [
+          exercise("single-arm-row", "Single-Arm Row", [
+            { modality: "conventional", reps: 8, externalLoadLb: 40, side: "left" },
+            { modality: "conventional", reps: 8, externalLoadLb: 40, side: "right" },
+          ]),
+        ]),
+      ],
+      "single-arm-row",
+    );
+    expect(records.bestReps).toBe(8);
+    expect(records.bestE1rmLb).toBeCloseTo(40 * (1 + 8 / 30), 8);
   });
 
   it("breaks rep ties toward the heavier set and still reports the heaviest external load", () => {

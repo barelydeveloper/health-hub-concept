@@ -36,25 +36,32 @@ export default function BodyPage() {
   const trends = useQuery({ queryKey: ["trends"], queryFn: () => api<Trends>("/api/v1/body-composition/trends") });
   const measurements = useQuery({ queryKey: ["measurements"], queryFn: () => api<Measurements>("/api/v1/measurements") });
   const [message, setMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formEl = event.currentTarget;
+    const form = new FormData(formEl);
     const weight = Number(form.get("weightLb"));
     const bodyFat = form.get("bodyFatPercent");
-    await api("/api/v1/measurements", {
-      method: "POST",
-      headers: { "idempotency-key": idempotencyKey() },
-      body: JSON.stringify({
-        recordedAt: new Date(`${form.get("date")}T11:00:00.000Z`).toISOString(),
-        weightLb: weight,
-        bodyFatPercent: bodyFat ? Number(bodyFat) : undefined,
-      }),
-    });
-    setMessage("Measurement saved.");
-    event.currentTarget.reset();
-    await client.invalidateQueries({ queryKey: ["trends"] });
-    await client.invalidateQueries({ queryKey: ["measurements"] });
+    setFormError(null);
+    try {
+      await api("/api/v1/measurements", {
+        method: "POST",
+        headers: { "idempotency-key": idempotencyKey() },
+        body: JSON.stringify({
+          recordedAt: new Date(`${form.get("date")}T11:00:00.000Z`).toISOString(),
+          weightLb: weight,
+          bodyFatPercent: bodyFat ? Number(bodyFat) : undefined,
+        }),
+      });
+      setMessage("Measurement saved.");
+      formEl.reset();
+      await client.invalidateQueries({ queryKey: ["trends"] });
+      await client.invalidateQueries({ queryKey: ["measurements"] });
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Request failed");
+    }
   }
 
   if (trends.error || measurements.error) return <p role="alert">{(trends.error ?? measurements.error)?.message}</p>;
@@ -121,6 +128,7 @@ export default function BodyPage() {
           <label className="text-sm">Body fat %<input name="bodyFatPercent" type="number" step="0.1" min="0" max="100" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
           <button className="rounded bg-accent px-4 py-2 font-semibold text-ink sm:col-span-3">Save</button>
         </form>
+        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
         {message ? <p className="mt-2 text-sm">{message}</p> : null}
       </Panel>
     </div>

@@ -52,12 +52,18 @@ export function readSession(token: string, now = Date.now()): { sub: string } | 
   if (parts.length !== 2) return null;
   const [payload, sig] = parts;
   const expected = createHmac("sha256", secret()).update(payload).digest("base64url");
-  const actual = Buffer.from(sig);
-  const expectedBuf = Buffer.from(expected);
-  if (actual.length !== expectedBuf.length || !timingSafeEqual(actual, expectedBuf)) return null;
+  const actual = Buffer.from(sig, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
+  if (actual.length !== expectedBuf.length) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString()) as { sub?: string; exp?: number };
-    if (!parsed.sub || typeof parsed.exp !== "number" || parsed.exp < now) return null;
+    if (!timingSafeEqual(actual, expectedBuf)) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString()) as { sub?: unknown; exp?: unknown };
+    if (typeof parsed.sub !== "string" || parsed.sub.length === 0) return null;
+    if (typeof parsed.exp !== "number" || !Number.isFinite(parsed.exp) || parsed.exp <= now) return null;
     return { sub: parsed.sub };
   } catch {
     return null;
@@ -66,7 +72,7 @@ export function readSession(token: string, now = Date.now()): { sub: string } | 
 
 export function sessionCookie(token: string): string {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  return `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`;
+  return `${COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`;
 }
 
 export function clearSessionCookie(): string {
@@ -79,7 +85,12 @@ function readCookie(req: Request, name: string): string | null {
   if (!header) return null;
   for (const part of header.split(";")) {
     const [key, ...rest] = part.trim().split("=");
-    if (key === name) return decodeURIComponent(rest.join("="));
+    if (key !== name) continue;
+    try {
+      return decodeURIComponent(rest.join("="));
+    } catch {
+      return null;
+    }
   }
   return null;
 }
@@ -88,16 +99,30 @@ function isScope(value: string): value is Scope {
   return value === "read" || value === "write" || value === "import";
 }
 
-export async function authenticate(req: Request): Promise<AuthContext | null> {
+export function filterScopes(values: readonly string[]): Scope[] {
+  return values.filter(isScope);
+}
+
+export function tokenUsable(token: { revokedAt: Date | null; expiresAt: Date | null }, now = Date.now()): boolean {
+  if (token.revokedAt) return false;
+  if (!token.expiresAt) return true;
+  const expiresAt = token.expiresAt.getTime();
+  return Number.isFinite(expiresAt) && expiresAt > now;
+}
+
+export async function touchApiToken(tokenId: string): Promise<void> {
+  await prisma.apiToken.update({ where: { id: tokenId }, data: { lastUsedAt: new Date() } });
+}
+
+export async function authenticate(req: Request, options?: { touch?: boolean }): Promise<AuthContext | null> {
   const header = req.headers.get("authorization");
   if (header?.toLowerCase().startsWith("bearer ")) {
     const raw = header.slice(7).trim();
     if (!raw) return null;
     const token = await prisma.apiToken.findUnique({ where: { tokenHash: hashToken(raw) } });
-    if (!token || token.revokedAt) return null;
-    if (token.expiresAt && token.expiresAt.getTime() < Date.now()) return null;
-    await prisma.apiToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } });
-    return { userId: token.userId, tokenId: token.id, scopes: token.scopes.filter(isScope), via: "token" };
+    if (!token || !tokenUsable(token)) return null;
+    if (options?.touch !== false) await touchApiToken(token.id);
+    return { userId: token.userId, tokenId: token.id, scopes: filterScopes(token.scopes), via: "token" };
   }
   const cookie = readCookie(req, COOKIE);
   if (!cookie) return null;

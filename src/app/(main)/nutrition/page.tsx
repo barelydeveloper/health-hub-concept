@@ -17,24 +17,30 @@ export default function NutritionPage() {
   const client = useQueryClient();
   const query = useQuery({ queryKey: ["nutrition"], queryFn: () => api<Nutrition>("/api/v1/nutrition") });
   const [message, setMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await api("/api/v1/nutrition", {
-      method: "POST",
-      headers: { "idempotency-key": idempotencyKey() },
-      body: JSON.stringify({
-        recordedAt: new Date(`${form.get("date")}T18:00:00.000Z`).toISOString(),
-        name: form.get("name"),
-        calories: Number(form.get("calories")),
-        proteinG: Number(form.get("protein")),
-        carbG: Number(form.get("carbs")),
-        fatG: Number(form.get("fat")),
-      }),
-    });
-    setMessage("Food entry saved.");
-    await client.invalidateQueries({ queryKey: ["nutrition"] });
+    setFormError(null);
+    try {
+      await api("/api/v1/nutrition", {
+        method: "POST",
+        headers: { "idempotency-key": idempotencyKey() },
+        body: JSON.stringify({
+          recordedAt: new Date(`${form.get("date")}T18:00:00.000Z`).toISOString(),
+          name: form.get("name"),
+          calories: Number(form.get("calories")),
+          proteinG: Number(form.get("protein")),
+          carbG: Number(form.get("carbs")),
+          fatG: Number(form.get("fat")),
+        }),
+      });
+      setMessage("Food entry saved.");
+      await client.invalidateQueries({ queryKey: ["nutrition"] });
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Request failed");
+    }
   }
 
   if (query.error) return <p role="alert">{query.error.message}</p>;
@@ -60,6 +66,7 @@ export default function NutritionPage() {
           <label className="text-sm">Fat (g)<input name="fat" type="number" min="0" step="0.1" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
           <button className="rounded bg-accent px-4 py-2 font-semibold text-ink">Save</button>
         </form>
+        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
         {message ? <p className="mt-2 text-sm">{message}</p> : null}
       </Panel>
       <Panel title="History">

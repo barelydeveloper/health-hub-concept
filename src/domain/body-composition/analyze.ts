@@ -126,6 +126,10 @@ function rawBodyFatPercent(reading: BodyReading, fatMassLb: number | null): numb
   return null;
 }
 
+function positiveFraction(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
 function twoCompartmentEstimate(
   weightLb: number | null,
   bodyWaterLb: number | null,
@@ -133,7 +137,15 @@ function twoCompartmentEstimate(
   hydrationFractionLow: number,
   hydrationFractionHigh: number,
 ): TwoCompartmentEstimate | null {
-  if (weightLb === null || bodyWaterLb === null || weightLb <= 0 || bodyWaterLb <= 0) {
+  if (
+    weightLb === null ||
+    bodyWaterLb === null ||
+    weightLb <= 0 ||
+    bodyWaterLb <= 0 ||
+    !positiveFraction(hydrationFraction) ||
+    !positiveFraction(hydrationFractionLow) ||
+    !positiveFraction(hydrationFractionHigh)
+  ) {
     return null;
   }
   const fatFreeMassLb = bodyWaterLb / hydrationFraction;
@@ -195,6 +207,13 @@ function sortedReadings(readings: readonly BodyReading[]): BodyReading[] {
     if (aValid !== bValid) return aValid ? -1 : 1;
     return a.index - b.index;
   }).map((entry) => entry.reading);
+}
+
+/** UTC calendar day, so repeated readings on one day count once. */
+function pairedDayKey(recordedAt: string): string | null {
+  const time = Date.parse(recordedAt);
+  if (!Number.isFinite(time)) return null;
+  return new Date(time).toISOString().slice(0, 10);
 }
 
 function normalizationDecision(
@@ -262,14 +281,20 @@ export function analyzeBodyComposition(
     return [water];
   });
 
-  const pairedDays = sorted.filter((reading) => {
-    return (
-      isFiniteNumber(reading.weightLb) &&
-      reading.weightLb > 0 &&
-      isFiniteNumber(reading.bodyWaterLb) &&
-      reading.bodyWaterLb > 0
-    );
-  }).length;
+  const pairedDays = new Set(
+    sorted.flatMap((reading) => {
+      if (
+        !isFiniteNumber(reading.weightLb) ||
+        reading.weightLb <= 0 ||
+        !isFiniteNumber(reading.bodyWaterLb) ||
+        reading.bodyWaterLb <= 0
+      ) {
+        return [];
+      }
+      const day = pairedDayKey(reading.recordedAt);
+      return day === null ? [] : [day];
+    }),
+  ).size;
 
   const normalization = normalizationDecision(
     pairedDays,

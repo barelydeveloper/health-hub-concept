@@ -28,6 +28,7 @@ export default function WorkoutsPage() {
   const [slug, setSlug] = useState("pull-up");
   const history = useQuery({ queryKey: ["history", slug], queryFn: () => api<History>(`/api/v1/exercises/${encodeURIComponent(slug)}/history`), enabled: Boolean(slug) });
   const [message, setMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -36,30 +37,35 @@ export default function WorkoutsPage() {
     const reps = form.get("reps");
     const load = form.get("load");
     const duration = form.get("duration");
-    await api("/api/v1/workouts", {
-      method: "POST",
-      headers: { "idempotency-key": idempotencyKey() },
-      body: JSON.stringify({
-        startedAt: new Date(`${form.get("date")}T15:00:00.000Z`).toISOString(),
-        name: String(form.get("name") || "Logged session"),
-        exercises: [{
-          exerciseSlug: String(form.get("slug")),
-          exerciseName: String(form.get("exerciseName") || form.get("slug")),
-          sets: [{
-            modality,
-            reps: reps ? Number(reps) : null,
-            durationSec: duration ? Number(duration) : null,
-            externalLoadLb: modality === "conventional" || modality === "eccentric_only" ? (load ? Number(load) : null) : null,
-            addedLoadLb: modality === "weighted_bodyweight" ? (load ? Number(load) : null) : null,
-            assistanceLb: modality === "assisted" ? (load ? Number(load) : null) : null,
-            bodyWeightLb: modality === "bodyweight" || modality === "weighted_bodyweight" || modality === "assisted" ? Number(form.get("bodyWeight") || 0) || null : null,
+    setFormError(null);
+    try {
+      await api("/api/v1/workouts", {
+        method: "POST",
+        headers: { "idempotency-key": idempotencyKey() },
+        body: JSON.stringify({
+          startedAt: new Date(`${form.get("date")}T15:00:00.000Z`).toISOString(),
+          name: String(form.get("name") || "Logged session"),
+          exercises: [{
+            exerciseSlug: String(form.get("slug")),
+            exerciseName: String(form.get("exerciseName") || form.get("slug")),
+            sets: [{
+              modality,
+              reps: reps ? Number(reps) : null,
+              durationSec: duration ? Number(duration) : null,
+              externalLoadLb: modality === "conventional" || modality === "eccentric_only" ? (load ? Number(load) : null) : null,
+              addedLoadLb: modality === "weighted_bodyweight" ? (load ? Number(load) : null) : null,
+              assistanceLb: modality === "assisted" ? (load ? Number(load) : null) : null,
+              bodyWeightLb: modality === "bodyweight" || modality === "weighted_bodyweight" || modality === "assisted" ? Number(form.get("bodyWeight") || 0) || null : null,
+            }],
           }],
-        }],
-      }),
-    });
-    setMessage("Workout saved.");
-    await client.invalidateQueries({ queryKey: ["workouts"] });
-    await client.invalidateQueries({ queryKey: ["history"] });
+        }),
+      });
+      setMessage("Workout saved.");
+      await client.invalidateQueries({ queryKey: ["workouts"] });
+      await client.invalidateQueries({ queryKey: ["history"] });
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Request failed");
+    }
   }
 
   if (workouts.error) return <p role="alert">{workouts.error.message}</p>;
@@ -90,6 +96,7 @@ export default function WorkoutsPage() {
           <label className="text-sm">Body weight (lb)<input name="bodyWeight" type="number" min="0" step="0.1" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
           <button className="rounded bg-accent px-4 py-2 font-semibold text-ink">Save session</button>
         </form>
+        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
         {message ? <p className="mt-2 text-sm">{message}</p> : null}
       </Panel>
       <Panel title="Timeline">
@@ -108,7 +115,7 @@ export default function WorkoutsPage() {
         ))}
       </Panel>
       <Panel title={`History: ${slug}`}>
-        {history.error ? <p>{history.error.message}</p> : history.isLoading || !history.data ? <p>Loading history…</p> : (
+        {history.error ? <p role="alert">{history.error.message}</p> : history.isLoading || !history.data ? <p>Loading history…</p> : (
           <div className="space-y-2 text-sm">
             <p>Latest total reps {history.data.data.comparison.latest?.totalReps ?? "—"} (best {history.data.data.comparison.latest?.bestReps ?? "—"}), previous {history.data.data.comparison.previous?.totalReps ?? "—"}, change {history.data.data.comparison.deltaTotalReps ?? "—"} reps.</p>
             <p>Records: e1RM {formatNumber(history.data.data.records.bestE1rmLb)} lb, reps {history.data.data.records.bestReps ?? "—"}, hold {formatNumber(history.data.data.records.bestDurationSec, 0)} s, eccentric load {formatNumber(history.data.data.records.bestEccentricLoadLb, 0)} lb.</p>

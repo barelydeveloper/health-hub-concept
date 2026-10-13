@@ -28,12 +28,11 @@ export const CAPPED_ASSUMPTIONS: readonly string[] = [
   "Uses a 3500 kcal/lb proxy to turn the gap between intake and TDEE into an expected weight change.",
   "Fat loss is capped at the lesser of 1.5 lb per week and 1% of current body weight per week.",
   "Lean gain is capped at 0.1, 0.25, or 0.5 lb per week for conservative, expected, and aggressive modes. Mode also scales the energy-predicted weekly change by 0.5, 1, or 1.5. Fat-free mass change is not muscle.",
-  "A 5% fat floor keeps the estimated fat fraction from falling below 5% of body weight.",
+  "A 5% fat floor stops estimated fat loss from crossing below 5% of body weight. A deficit does not add weight to reach that floor.",
   "This is a heuristic, compared later against linear extrapolation.",
 ];
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const SLOPE_FLAT_LB_PER_WEEK = 0.15;
 
 export interface SeriesPoint {
   at: string;
@@ -310,7 +309,14 @@ export function projectCapped(input: CappedInput): CappedResult {
     const newLean = weight - fat + leanChange;
     let newWeight = newFat + newLean;
     if (newWeight > 0 && newFat / newWeight < BF_FLOOR) {
-      newFat = (BF_FLOOR / (1 - BF_FLOOR)) * newLean;
+      const floorFat = (BF_FLOOR / (1 - BF_FLOOR)) * newLean;
+      if (raw < 0) {
+        // A deficit must not create fat to reach the floor. Hold the previous fat
+        // when the body is already under 5%; otherwise stop the loss at 5%.
+        newFat = Math.min(fat, Math.max(newFat, floorFat));
+      } else {
+        newFat = floorFat;
+      }
       newWeight = newLean + newFat;
     }
 
@@ -364,12 +370,23 @@ export function detectPlateau(points: SeriesPoint[], windowDays = 21): PlateauRe
   const slope = fit.slopePerWeek;
   const change = window[window.length - 1].value - window[0].value;
   const sd = sampleStandardDeviation(window.map((point) => point.value));
+  const spanWeeks = (window[window.length - 1].time - window[0].time) / MS_PER_DAY / 7;
+  const noise = fit.residualSd;
+  const slopeEffect = slope === null || !Number.isFinite(spanWeeks) ? null : Math.abs(slope) * spanWeeks;
 
-  if (slope === null || Math.abs(slope) >= SLOPE_FLAT_LB_PER_WEEK) {
+  if (slope === null || noise === null || slopeEffect === null || !Number.isFinite(noise)) {
     return {
       plateau: false,
       slopePerWeek: slope,
-      reason: "Weekly slope is outside the flat range used to flag a plateau.",
+      reason: "The recent window does not support a slope relative to its noise.",
+    };
+  }
+
+  if (slopeEffect > noise) {
+    return {
+      plateau: false,
+      slopePerWeek: slope,
+      reason: "The change implied by the weekly slope is larger than the residual noise.",
     };
   }
 
@@ -384,7 +401,7 @@ export function detectPlateau(points: SeriesPoint[], windowDays = 21): PlateauRe
   return {
     plateau: true,
     slopePerWeek: slope,
-    reason: "Slope is near zero and the net change sits within the variation of the window.",
+    reason: "The slope is near zero relative to the residual noise, and the net change sits within the variation of the window.",
   };
 }
 

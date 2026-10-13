@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeBodyComposition } from "./index";
+import { ROLLING_WINDOW_DAYS, analyzeBodyComposition } from "./index";
 import { ewma, linearSlopePerWeek, mad, median, modifiedZ, robustCv, rollingMean } from "./stats";
 import type { BodyReading } from "./analyze";
 
@@ -31,7 +31,8 @@ describe("stats", () => {
   });
 
   it("smooths with EWMA and reports an OLS slope per week", () => {
-    expect(ewma([10, 20], 0.2)).toEqual([10, 12]);
+    expect(ewma([10, 20, 100], 0.2)).toEqual([10, 12, 29.6]);
+    expect(ewma([], 0.2)).toEqual([]);
     expect(
       linearSlopePerWeek([
         { day: 0, value: 150 },
@@ -41,13 +42,21 @@ describe("stats", () => {
     expect(linearSlopePerWeek([{ day: 0, value: 150 }])).toBeNull();
   });
 
-  it("uses a trailing inclusive window for the rolling mean", () => {
+  it("withholds a rolling mean until the window is spanned and does not use a future point", () => {
     const points = [
       { recordedAt: "2026-01-01T00:00:00.000Z", value: 10 },
       { recordedAt: "2026-01-02T00:00:00.000Z", value: 20 },
       { recordedAt: "2026-01-03T00:00:00.000Z", value: 30 },
+      { recordedAt: "2026-01-04T00:00:00.000Z", value: 40 },
     ];
-    expect(rollingMean(points, 1)).toEqual([10, 15, 25]);
+    expect(rollingMean(points, 1)).toEqual([null, 15, 25, 35]);
+    expect(rollingMean([{ recordedAt: "2026-01-01T00:00:00.000Z", value: Number.NaN }], 7)).toEqual([
+      null,
+    ]);
+    expect(linearSlopePerWeek([
+      { day: 0, value: Number.NaN },
+      { day: 7, value: 151 },
+    ])).toBeNull();
   });
 });
 
@@ -69,7 +78,7 @@ describe("analyzeBodyComposition", () => {
       [...result.points.map((point) => point.recordedAt)].sort(),
     );
 
-    for (const point of result.points) {
+    result.points.forEach((point, index) => {
       expect(point.unusualHydration).toBe(false);
       expect(point.outlier).toBe(false);
       expect(point.rawFatMassLb).toBeCloseTo(30, 3);
@@ -86,8 +95,9 @@ describe("analyzeBodyComposition", () => {
       expect(point.twoCompartment?.fatFreeMassHighLb).toBeCloseTo(90 / 0.7, 3);
       expect(point.twoCompartment?.implausible).toBe(false);
       expect(point.ewmaWeightLb).toBeCloseTo(150, 3);
-      expect(point.rollingWeightLb).toBeCloseTo(150, 3);
-    }
+      if (index < ROLLING_WINDOW_DAYS) expect(point.rollingWeightLb).toBeNull();
+      else expect(point.rollingWeightLb).toBeCloseTo(150, 3);
+    });
 
     expect(result.rates.weightLbPerWeek).toBeCloseTo(0, 3);
     expect(result.rates.fatMassLbPerWeek).toBeCloseTo(0, 3);
@@ -126,6 +136,30 @@ describe("analyzeBodyComposition", () => {
     expect(last?.hydrationContext?.fatMassLb).toBeCloseTo(30, 3);
     expect(last?.rawBodyFatPercent).toBeCloseTo((30 / 158) * 100, 2);
     expect(last?.rawFatMassLb).toBeCloseTo(30, 3);
+  });
+
+  it("does not treat eight readings on one calendar day as eight paired days", () => {
+    const readings = Array.from({ length: 8 }, (_, hour) => ({
+      ...reading(0),
+      recordedAt: new Date(Date.UTC(2026, 0, 1, hour)).toISOString(),
+    }));
+    const result = analyzeBodyComposition(readings);
+
+    expect(result.normalization.status).toBe("insufficient_data");
+    expect(result.normalization.reason).toMatch(/Only 1 paired/);
+    expect(result.baselineBodyWaterLb).toBeNull();
+    expect(result.points.every((point) => point.hydrationContext === null)).toBe(true);
+    expect(result.points[0]?.rawFatMassLb).toBeCloseTo(30, 3);
+    expect(result.points[0]?.weightLb).toBeCloseTo(150, 3);
+    expect(result.points[0]?.rawSkeletalMuscleLb).toBeCloseTo(70, 3);
+  });
+
+  it("does not return an infinite two-compartment estimate when a hydration fraction is not positive", () => {
+    const result = analyzeBodyComposition(stableSeries(1), { hydrationFraction: 0 });
+    expect(result.points[0]?.twoCompartment).toBeNull();
+    expect(result.points[0]?.weightLb).toBeCloseTo(150, 3);
+    expect(result.points[0]?.bodyWaterLb).toBeCloseTo(90, 3);
+    expect(result.points[0]?.rawFatMassLb).toBeCloseTo(30, 3);
   });
 
   it("withholds hydration context when fewer than 8 paired days are available", () => {

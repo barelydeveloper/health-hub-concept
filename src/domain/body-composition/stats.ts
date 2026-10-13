@@ -93,24 +93,28 @@ export function ewma(values: number[], alpha: number): number[] {
 
 /**
  * Ordinary least-squares slope expressed per week (slope per day × 7).
- * Returns null when fewer than two points are available or the day axis
- * has no variance.
+ * Returns null when fewer than two finite points remain or the day axis
+ * has no variance. Non-finite points are omitted rather than turned into a
+ * numeric slope.
  */
 export function linearSlopePerWeek(
   points: readonly { day: number; value: number }[],
 ): number | null {
-  if (points.length < 2) return null;
+  const finite = points.filter(
+    (point) => Number.isFinite(point.day) && Number.isFinite(point.value),
+  );
+  if (finite.length < 2) return null;
   let sumX = 0;
   let sumY = 0;
-  for (const point of points) {
+  for (const point of finite) {
     sumX += point.day;
     sumY += point.value;
   }
-  const meanX = sumX / points.length;
-  const meanY = sumY / points.length;
+  const meanX = sumX / finite.length;
+  const meanY = sumY / finite.length;
   let numerator = 0;
   let denominator = 0;
-  for (const point of points) {
+  for (const point of finite) {
     const dx = point.day - meanX;
     numerator += dx * (point.value - meanY);
     denominator += dx * dx;
@@ -123,18 +127,22 @@ export function linearSlopePerWeek(
 /**
  * Trailing, inclusive rolling mean aligned to input order.
  * A sample contributes when its timestamp is within `windowDays` of the
- * anchor and not after it. Non-finite values are ignored.
+ * anchor and not after it. The mean is withheld until one of those samples
+ * is a full `windowDays` old, so a shorter history is not reported as that
+ * window. Non-finite values are ignored. An empty window returns null.
  */
 export function rollingMean(
   points: readonly { recordedAt: string; value: number }[],
   windowDays: number,
 ): (number | null)[] {
+  if (!Number.isFinite(windowDays) || windowDays < 0) return points.map(() => null);
   const times = points.map((point) => Date.parse(point.recordedAt));
   return points.map((_, index) => {
     const anchor = times[index];
     if (anchor === undefined || !Number.isFinite(anchor)) return null;
     let sum = 0;
     let count = 0;
+    let oldestDeltaDays = 0;
     for (let other = 0; other < points.length; other += 1) {
       const value = points[other]!.value;
       const time = times[other];
@@ -143,9 +151,12 @@ export function rollingMean(
       if (deltaDays >= 0 && deltaDays <= windowDays) {
         sum += value;
         count += 1;
+        if (deltaDays > oldestDeltaDays) oldestDeltaDays = deltaDays;
       }
     }
-    return count > 0 ? sum / count : null;
+    if (count === 0) return null;
+    if (windowDays > 0 && oldestDeltaDays < windowDays) return null;
+    return sum / count;
   });
 }
 

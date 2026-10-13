@@ -10,11 +10,17 @@ export function encodeCursor(at: string, id: string): string {
   return Buffer.from(`${at}\n${id}`).toString("base64url");
 }
 
+const MAX_CURSOR_LENGTH = 1024;
+
 export function decodeCursor(cursor: string | null): { at: string; id: string } | null {
-  if (!cursor) return null;
+  if (!cursor || cursor.length > MAX_CURSOR_LENGTH) return null;
   try {
-    const [at, id] = Buffer.from(cursor, "base64url").toString().split("\n");
-    if (!at || !id) return null;
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const splitAt = decoded.indexOf("\n");
+    if (splitAt <= 0 || decoded.indexOf("\n", splitAt + 1) !== -1) return null;
+    const at = decoded.slice(0, splitAt);
+    const id = decoded.slice(splitAt + 1);
+    if (!id || id.length > 200 || Number.isNaN(Date.parse(at))) return null;
     return { at, id };
   } catch {
     return null;

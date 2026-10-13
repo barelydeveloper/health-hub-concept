@@ -248,6 +248,8 @@ export function summarizeExercise(exercise: ExercisePerformance): ExerciseSummar
     }
 
     if (set.modality !== "isometric" && finitePositive(set.reps)) {
+      // Each unilateral side is its own work set, so volume and rep totals
+      // include both. Rep and e1RM records keep the best single set.
       totalReps += set.reps;
       if (bestReps == null || set.reps > bestReps) bestReps = set.reps;
     }

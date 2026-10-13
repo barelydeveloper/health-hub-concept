@@ -19,13 +19,48 @@ describe("estimateGlycogenRefill", () => {
     expect(result.glycogenLb).toBeCloseTo(glycogenLb, 5);
     expect(result.projectedWeightMidLb).toBeCloseTo(151.918, 3);
     expect(result.projectedWeightMidLb).toBeCloseTo(projectedMid, 5);
-    expect(result.projectedBodyFatMidPercent).toBeCloseTo(19.75, 2);
-    expect(result.projectedBodyFatMidPercent).toBeCloseTo((30 / projectedMid) * 100, 5);
-    expect(result.projectedWeightLowLb).toBeLessThan(result.projectedWeightMidLb);
-    expect(result.projectedWeightMidLb).toBeLessThan(result.projectedWeightHighLb);
+    const midPercent = result.projectedBodyFatMidPercent;
+    const weightLow = result.projectedWeightLowLb;
+    const weightMid = result.projectedWeightMidLb;
+    const weightHigh = result.projectedWeightHighLb;
+    if (midPercent === null || weightLow === null || weightMid === null || weightHigh === null) {
+      throw new Error("expected a finite glycogen projection");
+    }
+    expect(midPercent).toBeCloseTo(19.75, 2);
+    expect(midPercent).toBeCloseTo((30 / projectedMid) * 100, 5);
+    expect(weightLow).toBeLessThan(weightMid);
+    expect(weightMid).toBeLessThan(weightHigh);
     expect(result.limitations.join(" ")).toMatch(/heuristic/i);
     expect(result.limitations.join(" ")).toMatch(/2\.7/);
     expect(result.limitations.join(" ")).toMatch(/4\.0/);
     expect(result).not.toHaveProperty("skeletalMuscleLb");
+  });
+
+  it("returns null body fat instead of NaN when projected weight is not positive", () => {
+    const result = estimateGlycogenRefill({
+      depletedWeightLb: 0,
+      referenceFatMassLb: 30,
+      glycogenG: 0,
+    });
+
+    expect(result.projectedWeightMidLb).toBe(0);
+    expect(result.projectedBodyFatLowPercent).toBeNull();
+    expect(result.projectedBodyFatMidPercent).toBeNull();
+    expect(result.projectedBodyFatHighPercent).toBeNull();
+  });
+
+  it("returns nulls instead of NaN when a glycogen input is not finite", () => {
+    const result = estimateGlycogenRefill({
+      depletedWeightLb: Number.NaN,
+      referenceFatMassLb: 30,
+      glycogenG: 200,
+    });
+
+    expect(result.glycogenLb).toBeNull();
+    expect(result.projectedWeightLowLb).toBeNull();
+    expect(result.projectedWeightMidLb).toBeNull();
+    expect(result.projectedWeightHighLb).toBeNull();
+    expect(result.projectedBodyFatMidPercent).toBeNull();
+    expect(result.heuristic).toBe(true);
   });
 });

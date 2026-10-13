@@ -15,30 +15,41 @@ export default function SettingsPage() {
   const tokens = useQuery({ queryKey: ["tokens"], queryFn: () => api<Tokens>("/api/v1/tokens") });
   const audit = useQuery({ queryKey: ["audit"], queryFn: () => api<Audit>("/api/v1/audit") });
   const [created, setCreated] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   async function createToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const scopes = ["read", "write", "import"].filter((scope) => form.get(scope) === "on");
-    const result = await api<{ data: { token: string } }>("/api/v1/tokens", {
-      method: "POST",
-      headers: { "idempotency-key": idempotencyKey() },
-      body: JSON.stringify({ name: form.get("name"), scopes }),
-    });
-    setCreated(result.data.token);
-    await client.invalidateQueries({ queryKey: ["tokens"] });
+    setActionError(null);
+    try {
+      const result = await api<{ data: { token: string } }>("/api/v1/tokens", {
+        method: "POST",
+        headers: { "idempotency-key": idempotencyKey() },
+        body: JSON.stringify({ name: form.get("name"), scopes }),
+      });
+      setCreated(result.data.token);
+      await client.invalidateQueries({ queryKey: ["tokens"] });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Request failed");
+    }
   }
 
   async function revoke(id: string) {
-    await api(`/api/v1/tokens/${id}`, { method: "DELETE", headers: { "idempotency-key": idempotencyKey() } });
-    await client.invalidateQueries({ queryKey: ["tokens"] });
+    setActionError(null);
+    try {
+      await api(`/api/v1/tokens/${id}`, { method: "DELETE", headers: { "idempotency-key": idempotencyKey() } });
+      await client.invalidateQueries({ queryKey: ["tokens"] });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Request failed");
+    }
   }
 
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Settings</h1>
       <Panel title="Profile">
-        {me.data ? <p className="text-sm">{me.data.data.email}. Height {me.data.data.profile?.heightInches ?? "—"} in. Timezone {me.data.data.profile?.timezone ?? "—"}. {me.data.data.profile?.notes}</p> : <p>Loading…</p>}
+        {me.error ? <p role="alert">{me.error.message}</p> : me.data ? <p className="text-sm">{me.data.data.email}. Height {me.data.data.profile?.heightInches ?? "—"} in. Timezone {me.data.data.profile?.timezone ?? "—"}. {me.data.data.profile?.notes}</p> : <p>Loading…</p>}
       </Panel>
       <Panel title="API access">
         <form onSubmit={createToken} className="space-y-2 text-sm">
@@ -49,14 +60,17 @@ export default function SettingsPage() {
           <button className="mt-2 block rounded bg-accent px-4 py-2 font-semibold text-ink">Create token</button>
         </form>
         {created ? <p className="mt-3 break-all text-sm">Copy this token now. It is not shown again: {created}</p> : null}
-        <ul className="mt-3 space-y-2 text-sm">
-          {tokens.data?.data.map((token) => (
-            <li key={token.id} className="flex items-center justify-between gap-3">
-              <span>{token.name} ({token.scopes.join(", ")}) {token.revokedAt ? "revoked" : "active"}</span>
-              {token.revokedAt ? null : <button type="button" className="rounded border border-line px-2 py-1" onClick={() => revoke(token.id)}>Revoke</button>}
-            </li>
-          ))}
-        </ul>
+        {actionError ? <p role="alert" className="mt-3 text-sm">{actionError}</p> : null}
+        {tokens.error ? <p role="alert" className="mt-3 text-sm">{tokens.error.message}</p> : tokens.isLoading || !tokens.data ? <p className="mt-3 text-sm">Loading…</p> : (
+          <ul className="mt-3 space-y-2 text-sm">
+            {tokens.data.data.length === 0 ? <li className="text-muted">No tokens yet.</li> : tokens.data.data.map((token) => (
+              <li key={token.id} className="flex items-center justify-between gap-3">
+                <span>{token.name} ({token.scopes.join(", ")}) {token.revokedAt ? "revoked" : "active"}</span>
+                {token.revokedAt ? null : <button type="button" className="rounded border border-line px-2 py-1" onClick={() => revoke(token.id)}>Revoke</button>}
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
       <Panel title="Example ChatGPT commands">
         <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
@@ -68,9 +82,11 @@ export default function SettingsPage() {
         <p className="mt-2 text-sm text-muted">Point a GPT Action at the deployed HTTPS OpenAPI file and send the bearer token. The app works with no AI service connected.</p>
       </Panel>
       <Panel title="Audit">
-        <ul className="space-y-1 text-sm">
-          {audit.data?.data.slice(0, 12).map((row) => <li key={row.id}>{row.createdAt.slice(0, 16).replace("T", " ")} {row.action} {row.entityType}</li>)}
-        </ul>
+        {audit.error ? <p role="alert">{audit.error.message}</p> : audit.isLoading || !audit.data ? <p className="text-sm">Loading…</p> : audit.data.data.length === 0 ? <p className="text-sm text-muted">No audit events yet.</p> : (
+          <ul className="space-y-1 text-sm">
+            {audit.data.data.slice(0, 12).map((row) => <li key={row.id}>{row.createdAt.slice(0, 16).replace("T", " ")} {row.action} {row.entityType}</li>)}
+          </ul>
+        )}
       </Panel>
     </div>
   );

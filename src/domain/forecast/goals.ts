@@ -2,6 +2,8 @@ import { FORECAST_VERSION, linearModel, parseSeries, type SeriesPoint } from "./
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const SLOPE_EPSILON_PER_WEEK = 1e-6;
+/** ECMAScript Date millisecond limits. Values outside this throw from toISOString. */
+const MAX_DATE_MS = 8.64e15;
 
 export const GOAL_DISCLAIMER =
   "Outcomes are not guaranteed. The estimated date is not a guaranteed date.";
@@ -83,7 +85,11 @@ export function projectGoal(points: SeriesPoint[], goal: GoalSpec, asOf?: string
   const slopePerDay = slopePerWeek / 7;
   const days = (goal.target - (latest as number)) / slopePerDay;
   const anchorTime = resolveAnchor(asOf, series[series.length - 1].time);
-  const estimatedDate = new Date(anchorTime + days * MS_PER_DAY).toISOString();
+  const estimatedMs = anchorTime + days * MS_PER_DAY;
+  if (!Number.isFinite(days) || !Number.isFinite(estimatedMs) || Math.abs(estimatedMs) > MAX_DATE_MS) {
+    return { ...base, status: "no_crossing", slopePerWeek };
+  }
+  const estimatedDate = new Date(estimatedMs).toISOString();
 
   return {
     ...base,

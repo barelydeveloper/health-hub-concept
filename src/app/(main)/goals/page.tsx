@@ -20,23 +20,29 @@ export default function GoalsPage() {
   const goals = useQuery({ queryKey: ["goals"], queryFn: () => api<Goals>("/api/v1/goals") });
   const forecasts = useQuery({ queryKey: ["forecasts"], queryFn: () => api<Forecasts>("/api/v1/forecasts?mode=expected&intakeKcal=2400&tdeeKcal=2600&horizonDays=56") });
   const [message, setMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await api("/api/v1/goals", {
-      method: "POST",
-      headers: { "idempotency-key": idempotencyKey() },
-      body: JSON.stringify({
-        type: form.get("type"),
-        name: form.get("name"),
-        targetValue: Number(form.get("target")),
-        targetUnit: form.get("unit"),
-        direction: form.get("direction"),
-      }),
-    });
-    setMessage("Goal saved. The date, if any, is an estimate.");
-    await client.invalidateQueries({ queryKey: ["goals"] });
+    setFormError(null);
+    try {
+      await api("/api/v1/goals", {
+        method: "POST",
+        headers: { "idempotency-key": idempotencyKey() },
+        body: JSON.stringify({
+          type: form.get("type"),
+          name: form.get("name"),
+          targetValue: Number(form.get("target")),
+          targetUnit: form.get("unit"),
+          direction: form.get("direction"),
+        }),
+      });
+      setMessage("Goal saved. The date, if any, is an estimate.");
+      await client.invalidateQueries({ queryKey: ["goals"] });
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Request failed");
+    }
   }
 
   if (goals.error || forecasts.error) return <p role="alert">{(goals.error ?? forecasts.error)?.message}</p>;
@@ -84,6 +90,7 @@ export default function GoalsPage() {
           </label>
           <button className="rounded bg-accent px-4 py-2 font-semibold text-ink">Save goal</button>
         </form>
+        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
         {message ? <p className="mt-2 text-sm">{message}</p> : null}
       </Panel>
     </div>

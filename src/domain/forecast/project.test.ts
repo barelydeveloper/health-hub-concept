@@ -203,6 +203,22 @@ describe("projectCapped", () => {
     expect(result.fatFreeMassLb).toBeCloseTo(120.25, 8);
   });
 
+  it("does not gain weight in a deficit to manufacture the 5% fat floor", () => {
+    const result = projectCapped({
+      weightLb: 200,
+      fatMassLb: 8,
+      intakeKcal: 1500,
+      tdeeKcal: 2500,
+      horizonDays: 7,
+      mode: "expected",
+    });
+    expect(result.status).toBe("ok");
+    expect(result.weightLb).toBeCloseTo(200, 6);
+    expect(result.fatMassLb).toBeCloseTo(8, 6);
+    expect(result.fatFreeMassLb).toBeCloseTo(192, 6);
+    expect(result.bodyFatPercent).toBeCloseTo(4, 6);
+  });
+
   it("rejects inputs that cannot describe a body or a horizon", () => {
     const cases = [
       { ...base, mode: "expected" as const, weightLb: 0 },
@@ -236,6 +252,20 @@ describe("detectPlateau", () => {
     expect(result.plateau).toBe(true);
     expect(result.slopePerWeek).not.toBeNull();
     expect(Math.abs(result.slopePerWeek as number)).toBeLessThan(0.15);
+  });
+
+  it("treats a noisy slope above 0.15 lb/week as a plateau when it is small relative to residual error", () => {
+    const values = [150, 158, 143, 160, 141, 155, 149.6];
+    const points = values.map((value, index) => ({ at: atDay(index * 3.5), value }));
+    const fit = linearModel(points);
+    const spanWeeks = 3;
+    expect(fit.slopePerWeek).not.toBeNull();
+    expect(Math.abs(fit.slopePerWeek as number)).toBeGreaterThan(0.15);
+    expect(fit.residualSd as number).toBeGreaterThan(Math.abs(fit.slopePerWeek as number) * spanWeeks);
+
+    const result = detectPlateau(points, 21);
+    expect(result.plateau).toBe(true);
+    expect(result.slopePerWeek).toBeCloseTo(fit.slopePerWeek as number, 8);
   });
 
   it("judges only the recent window", () => {
@@ -343,6 +373,19 @@ describe("projectGoal", () => {
     const result = projectGoal(points, { type: "weight", target: 155, direction: "up" }, asOf);
     const estimated = new Date(result.estimatedDate ?? "").getTime();
     expect((estimated - Date.parse(asOf)) / DAY_MS).toBeCloseTo(14, 5);
+  });
+
+  it("does not throw when the projected crossing is not a representable date", () => {
+    const result = projectGoal(
+      [
+        { at: atDay(0), value: 0 },
+        { at: atDay(7), value: 1e-5 },
+      ],
+      { type: "weight", target: 1_000_000, direction: "up" },
+    );
+    expect(result.status).toBe("no_crossing");
+    expect(result.estimatedDate).toBeNull();
+    expect(result.slopePerWeek).toBeCloseTo(1e-5, 8);
   });
 
   it("returns insufficient_data below two points when the goal is still ahead", () => {
