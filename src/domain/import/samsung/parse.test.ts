@@ -86,6 +86,15 @@ function zipStored(entries: { name: string; data: Buffer }[]): Buffer {
 }
 
 describe("samsung weight", () => {
+  it("keeps eight stable paired days for a hydration-context fixture", async () => {
+    const draft = await parseSamsungFiles([{ name: "com.samsung.health.weight.csv", text: fixture("weight_hydration.csv") }]);
+    expect(draft.errors).toEqual([]);
+    expect(draft.days).toHaveLength(8);
+    expect(draft.days.every((day) => day.weightLb != null && day.bodyWaterLb != null && day.bodyFatPercent === 19)).toBe(true);
+    const water = new Set(draft.days.map((day) => day.bodyWaterLb));
+    expect(water.size).toBe(1);
+  });
+
   it("converts kg to lb, keeps the later timestamp, and skips weight above 100 kg", async () => {
     const text = fixture("weight.csv");
     const name = "com.samsung.health.weight.20260601123000.csv";

@@ -36,7 +36,7 @@ export default function OverviewPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Stat label="Weight" value={body ? `${formatNumber(body.weightLb)} lb` : "—"} detail={body ? new Date(body.recordedAt).toLocaleDateString() : "No weigh-ins"} />
         <Stat label="Body fat, raw" value={body?.bodyFatPercent == null ? "—" : `${formatNumber(body.bodyFatPercent)}%`} />
-        <Stat label="Body fat, normalized" value={body?.normalizedBodyFatPercent == null ? "—" : `${formatNumber(body.normalizedBodyFatPercent)}%`} detail={body?.normalization.status === "insufficient_data" ? body.normalization.reason ?? "Not enough paired data" : "Estimate, shown beside the raw value"} />
+        <Stat label="Body fat, normalized" value={body?.normalizedBodyFatPercent == null ? "—" : `${formatNumber(body.normalizedBodyFatPercent)}%`} detail={body?.normalizedBodyFatPercent != null ? "Estimate, shown beside the raw value" : body?.normalization.reason ?? "No hydration-adjusted value for this reading"} />
         <Stat label="Fat mass" value={body?.fatMassLb == null ? "—" : `${formatNumber(body.fatMassLb)} lb`} />
         <Stat label="Fat-free mass" value={body?.fatFreeMassLb == null ? "—" : `${formatNumber(body.fatFreeMassLb)} lb`} detail="Not the same thing as muscle" />
         <Stat label="7-day steps" value={formatNumber(data.activity.steps, 0)} />

@@ -95,6 +95,7 @@ paths:
       responses:
         "201": { description: Created }
         "400": { description: Invalid body or missing idempotency key }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "409": { description: Idempotency key reused with a different body }
   /api/v1/workouts/{id}:
     parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -102,7 +103,8 @@ paths:
       summary: Read one workout
       responses:
         "200": { description: Workout }
-        "404": { description: Not found for this user }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
     patch:
       summary: Update session notes or timing
       parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
@@ -156,7 +158,8 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string }, description: Exercise slug }
       responses:
-        "200": { description: History }
+        "200": { description: History. An unknown slug returns an empty series, not another user's data. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /api/v1/personal-records:
     get:
       summary: Personal records and muscle-exposure heuristic
@@ -327,6 +330,11 @@ paths:
       responses:
         "200": { description: Audit rows }
 components:
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+    NotFound:
+      description: Not found for this user
   securitySchemes:
     bearerAuth:
       type: http

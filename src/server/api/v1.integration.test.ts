@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashPassword } from "@/server/auth";
-import { deleteSet, exerciseHistory, getWorkoutById, listWorkouts, patchMeasurement, postImport, postMeasurement, postSets, postWorkout } from "@/server/api/v1";
+import { deleteSet, exerciseHistory, getWorkoutById, listWorkouts, patchMeasurement, patchWorkoutById, postImport, postMeasurement, postSets, postWorkout } from "@/server/api/v1";
 import { prisma } from "@/server/db";
 import { setRateLimitForTests } from "@/server/rate-limit";
 
@@ -87,6 +87,23 @@ describe("API v1", () => {
     expect(hidden.status).toBe(404);
     const count = await prisma.workoutSession.count({ where: { userId: owner.user.id, name: "Test session" } });
     expect(count).toBe(1);
+
+    const patched = await patchWorkoutById(request("PATCH", `/api/v1/workouts/${created.data.id}`, {
+      token: other.raw,
+      key: "other-patch",
+      body: { name: "Stolen session" },
+    }), created.data.id);
+    expect(patched.status).toBe(404);
+    const appended = await postSets(request("POST", `/api/v1/workouts/${created.data.id}/sets`, {
+      token: other.raw,
+      key: "other-sets",
+      body: { exerciseSlug: "pull-up", sets: [{ modality: "bodyweight", reps: 1, bodyWeightLb: 151 }] },
+    }), created.data.id);
+    expect(appended.status).toBe(404);
+    const unchanged = await prisma.workoutSession.findUnique({ where: { id: created.data.id } });
+    expect(unchanged?.name).toBe("Test session");
+    const setCount = await prisma.workoutSet.count({ where: { workoutExercise: { sessionId: created.data.id }, deletedAt: null } });
+    expect(setCount).toBe(2);
   });
 
   it("keeps one workout when two identical writes race", async () => {

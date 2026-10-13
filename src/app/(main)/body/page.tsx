@@ -60,6 +60,7 @@ export default function BodyPage() {
   if (trends.error || measurements.error) return <p role="alert">{(trends.error ?? measurements.error)?.message}</p>;
   if (trends.isLoading || measurements.isLoading || !trends.data || !measurements.data) return <p>Loading body composition…</p>;
   const analysis = trends.data.data.analysis;
+  const labeled = [...analysis.points].reverse().find((point) => point.rawBodyFatPercent != null && point.hydrationContext?.bodyFatPercent != null);
   const chart = analysis.points.map((point) => ({
     date: point.recordedAt.slice(0, 10),
     weight: point.weightLb,
@@ -87,6 +88,7 @@ export default function BodyPage() {
         <TrendChart data={chart} lines={[{ key: "weight", name: "Weight (lb)", color: "#7dd3c7" }]} />
       </Panel>
       <Panel title="Body fat, raw and normalized">
+        {labeled ? <p className="mb-2 text-sm">Latest paired reading {labeled.recordedAt.slice(0, 10)}: raw {formatNumber(labeled.rawBodyFatPercent)}%, normalized {formatNumber(labeled.hydrationContext?.bodyFatPercent)}% (estimate).</p> : null}
         <TrendChart data={chart} lines={[{ key: "rawFat", name: "Raw %", color: "#f0b429" }, { key: "normalizedFat", name: "Normalized %", color: "#7dd3c7" }]} />
       </Panel>
       <Panel title="Fat mass and fat-free mass">

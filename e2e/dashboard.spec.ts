@@ -9,8 +9,9 @@ test("sign in and read fixture weight, then open workouts", async ({ page }) => 
   await expect(page.getByText("151.0 lb")).toBeVisible();
   await page.getByRole("link", { name: "Workouts" }).click();
   await expect(page.getByRole("heading", { name: "Workouts" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Pull-up" })).toBeVisible();
+  await expect(page.getByText("5 reps, best 2")).toBeVisible();
   await page.getByRole("link", { name: "Body" }).click();
   await expect(page.getByRole("heading", { name: "Body composition" })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/paired/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Body fat, raw and normalized" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fat mass and fat-free mass" })).toBeVisible();
 });
