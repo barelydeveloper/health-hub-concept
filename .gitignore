@@ -147,3 +147,9 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Local health exports (never commit)
+data/
+test-results/
+playwright-report/
+blob-report/

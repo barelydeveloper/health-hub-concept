@@ -1,0 +1,4 @@
+import { listWorkouts, postWorkout } from "@/server/api/v1";
+export const dynamic = "force-dynamic";
+export function GET(req: Request) { return listWorkouts(req); }
+export function POST(req: Request) { return postWorkout(req); }

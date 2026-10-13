@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Glycogen Refeed Estimator</title>
+  <style>
+    :root{
+      --bg:#0b0d10;
+      --panel:#15181d;
+      --panel2:#1b1f25;
+      --text:#f4f7fb;
+      --muted:#aeb7c3;
+      --line:#2a3038;
+      --accent:#9be15d;
+      --accentSoft:rgba(155,225,93,.12);
+      --info:#6dd5ed;
+      --warn:#ffd166;
+      --danger:#ff7b7b;
+      --shadow:0 12px 30px rgba(0,0,0,.35);
+      --radius:18px;
+    }
+
+    *{box-sizing:border-box}
+
+    body{
+      margin:0;
+      min-height:100vh;
+      padding:18px;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(109,213,237,.08), transparent 30%),
+        radial-gradient(circle at 85% 0%, rgba(155,225,93,.08), transparent 28%),
+        var(--bg);
+      color:var(--text);
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .app{width:min(1120px,100%);margin:0 auto}
+
+    header{
+      display:flex;
+      gap:14px;
+      align-items:flex-start;
+      justify-content:space-between;
+      margin-bottom:14px;
+    }
+
+    h1{
+      margin:0;
+      font-size:clamp(1.8rem,4vw,2.7rem);
+      letter-spacing:-.03em;
+    }
+
+    .sub{
+      color:var(--muted);
+      max-width:780px;
+      margin-top:8px;
+      line-height:1.5;
+      font-size:.98rem;
+    }
+
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      padding:6px 9px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:#101318;
+      color:var(--muted);
+      font-size:.76rem;
+      white-space:nowrap;
+    }
+
+    .status{
+      margin:0 0 16px;
+      padding:11px 13px;
+      border-radius:12px;
+      border:1px solid rgba(255,209,102,.35);
+      background:rgba(255,209,102,.08);
+      color:#ffe5a3;
+      font-size:.86rem;
+      line-height:1.4;
+    }
+
+    .status.ok{
+      border-color:rgba(155,225,93,.35);
+      background:rgba(155,225,93,.08);
+      color:#d8ffb6;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns:1fr 1.35fr;
+      gap:18px;
+    }
+
+    @media(max-width:820px){
+      header{display:block}
+      .badge{margin-top:10px}
+      .grid{grid-template-columns:1fr}
+    }
+
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,0)),var(--panel);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:18px;
+    }
+
+    .card h2{margin:0 0 14px;font-size:1.05rem}
+
+    .inputs{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:12px;
+    }
+
+    @media(max-width:520px){
+      .inputs{grid-template-columns:1fr}
+    }
+
+    label{
+      display:block;
+      color:var(--muted);
+      font-size:.82rem;
+      margin-bottom:6px;
+    }
+
+    input[type="number"], select{
+      width:100%;
+      padding:12px 13px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:#0f1216;
+      color:var(--text);
+      font-size:1rem;
+      outline:none;
+    }
+
+    input[type="number"]:focus, select:focus{
+      border-color:#4f5d6a;
+      box-shadow:0 0 0 3px rgba(109,213,237,.08);
+    }
+
+    .hint{
+      font-size:.76rem;
+      color:#7f8996;
+      margin-top:5px;
+      line-height:1.35;
+    }
+
+    .section-gap{margin-top:18px}
+
+    .preset-row{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:10px;
+      margin-top:14px;
+    }
+
+    @media(max-width:620px){
+      .preset-row{grid-template-columns:1fr}
+    }
+
+    .mode-radio{
+      position:absolute;
+      opacity:0;
+      pointer-events:none;
+    }
+
+    .preset{
+      display:block;
+      cursor:pointer;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:13px;
+      background:var(--panel2);
+      color:var(--text);
+      transition:.15s ease;
+      user-select:none;
+      margin:0;
+    }
+
+    .preset:hover{transform:translateY(-1px);border-color:#44505c}
+
+    .mode-radio:checked + .preset{
+      border-color:var(--accent);
+      box-shadow:0 0 0 2px var(--accentSoft);
+      background:linear-gradient(180deg,rgba(155,225,93,.07),rgba(155,225,93,.025)),var(--panel2);
+    }
+
+    .preset strong{display:block;font-size:.98rem}
+    .preset small{display:block;color:var(--muted);margin-top:3px}
+
+    .custom-wrap{
+      display:none;
+      margin-top:12px;
+      padding:13px;
+      border:1px dashed #38414b;
+      border-radius:14px;
+      background:#101318;
+    }
+
+    #modeCustom:checked ~ .custom-wrap{display:block}
+
+    .custom-grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+    }
+
+    @media(max-width:520px){
+      .custom-grid{grid-template-columns:1fr}
+    }
+
+    .metrics{
+      display:grid;
+      grid-template-columns:repeat(2,1fr);
+      gap:12px;
+    }
+
+    @media(max-width:620px){
+      .metrics{grid-template-columns:1fr}
+    }
+
+    .metric{
+      background:#101318;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:14px;
+    }
+
+    .metric .k{color:var(--muted);font-size:.8rem;margin-bottom:5px}
+    .metric .v{font-size:1.5rem;font-weight:750;letter-spacing:-.02em}
+    .metric .r{color:var(--muted);font-size:.78rem;margin-top:5px;line-height:1.35}
+
+    .summary{
+      margin-top:14px;
+      padding:14px;
+      border-radius:14px;
+      background:linear-gradient(90deg,rgba(109,213,237,.08),rgba(155,225,93,.08));
+      border:1px solid #32404b;
+      line-height:1.5;
+    }
+
+    .summary b{color:white}
+
+    .range-table{
+      width:100%;
+      border-collapse:collapse;
+      margin-top:14px;
+      font-size:.9rem;
+    }
+
+    .range-table th,.range-table td{
+      padding:9px 8px;
+      text-align:right;
+      border-bottom:1px solid var(--line);
+    }
+
+    .range-table th:first-child,.range-table td:first-child{text-align:left}
+    .range-table th{color:var(--muted);font-weight:600;font-size:.78rem}
+
+    .formula{
+      margin-top:14px;
+      border-top:1px solid var(--line);
+      padding-top:14px;
+      color:var(--muted);
+      font-size:.86rem;
+      line-height:1.55;
+    }
+
+    .formula code{
+      color:#dce7f2;
+      background:#0f1216;
+      padding:2px 5px;
+      border-radius:5px;
+    }
+
+    .footer-note{
+      margin-top:14px;
+      color:#8e98a5;
+      font-size:.78rem;
+      line-height:1.45;
+    }
+
+    .error{
+      display:none;
+      margin-top:12px;
+      color:#ffd2d2;
+      background:rgba(255,123,123,.08);
+      border:1px solid rgba(255,123,123,.3);
+      border-radius:10px;
+      padding:10px 12px;
+      font-size:.82rem;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>Glycogen Refeed Estimator</h1>
+        <div class="sub">
+          Enter depleted measurements and estimate scale-weight changes after a light, heavy, or custom glycogen refill.
+          This intentionally avoids predicting a new BIA skeletal-muscle value.
+        </div>
+      </div>
+      <div class="badge">Default water range: 2.7–4.0 g/g</div>
+    </header>
+
+    <div id="jsStatus" class="status">
+      Calculator JavaScript has not started. If this message remains visible, this file viewer is blocking JavaScript; open the HTML directly in Safari, Chrome, Edge, or Firefox.
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>1. Depleted metrics</h2>
+
+        <div class="inputs">
+          <div>
+            <label for="weight">Depleted weight (lb)</label>
+            <input id="weight" type="number" inputmode="decimal" step="0.1" min="0" value="143.8">
+          </div>
+
+          <div>
+            <label for="water">Depleted body water (lb)</label>
+            <input id="water" type="number" inputmode="decimal" step="0.1" min="0" value="82.2">
+            <div class="hint">Reference only; consumer BIA water is not treated as exact true water mass.</div>
+          </div>
+
+          <div>
+            <label for="fat">Reference fat mass (lb)</label>
+            <input id="fat" type="number" inputmode="decimal" step="0.1" min="0" value="29.1">
+            <div class="hint">Prefer a stable/pre-depletion estimate if today's BIA fat reading looks distorted.</div>
+          </div>
+
+          <div>
+            <label for="muscle">Depleted skeletal muscle reading (lb)</label>
+            <input id="muscle" type="number" inputmode="decimal" step="0.1" min="0" value="60.1">
+            <div class="hint">Recorded for reference only; not used to fabricate a replenished muscle value.</div>
+          </div>
+
+          <div>
+            <label for="extraWater">Extra retained water beyond glycogen water (lb)</label>
+            <input id="extraWater" type="number" inputmode="decimal" step="0.1" value="0">
+            <div class="hint">Usually leave at 0 unless you intentionally want to model additional retained fluid.</div>
+          </div>
+
+          <div>
+            <label>Water per gram of glycogen</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <input id="waterLow" type="number" inputmode="decimal" step="0.1" min="0" value="2.7" aria-label="Low water ratio">
+              <input id="waterHigh" type="number" inputmode="decimal" step="0.1" min="0" value="4.0" aria-label="High water ratio">
+            </div>
+            <div class="hint">Low and high modeling assumptions.</div>
+          </div>
+        </div>
+
+        <div class="section-gap">
+          <h2>2. Refeed size</h2>
+
+          <div class="preset-row">
+            <div>
+              <input class="mode-radio" type="radio" name="refeedMode" id="modeLight" value="light" checked>
+              <label class="preset" for="modeLight">
+                <strong>Light refeed</strong>
+                <small>200 g glycogen restored</small>
+              </label>
+            </div>
+
+            <div>
+              <input class="mode-radio" type="radio" name="refeedMode" id="modeHeavy" value="heavy">
+              <label class="preset" for="modeHeavy">
+                <strong>Heavy refeed</strong>
+                <small>350 g glycogen restored</small>
+              </label>
+            </div>
+
+            <div>
+              <input class="mode-radio" type="radio" name="refeedMode" id="modeCustom" value="custom">
+              <label class="preset" for="modeCustom">
+                <strong>Custom</strong>
+                <small>Enter your own estimate</small>
+              </label>
+            </div>
+          </div>
+
+          <div class="custom-wrap" id="customWrap">
+            <div class="custom-grid">
+              <div>
+                <label for="customCarbs">Carbohydrate consumed (g, optional)</label>
+                <input id="customCarbs" type="number" inputmode="decimal" step="1" min="0" placeholder="e.g. 300">
+                <div class="hint">Reference only. Carbs eaten do not automatically equal glycogen stored.</div>
+              </div>
+
+              <div>
+                <label for="customGlycogen">Estimated glycogen restored (g)</label>
+                <input id="customGlycogen" type="number" inputmode="decimal" step="1" min="0" value="300">
+                <div class="hint">This is the custom value used in the calculation.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="errorBox" class="error"></div>
+      </section>
+
+      <section class="card">
+        <h2>Estimated replenished metrics</h2>
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="k">Projected body weight</div>
+            <div class="v" id="weightResult">145.7 lb</div>
+            <div class="r" id="weightRangeText">Range 145.4–146.0 lb</div>
+          </div>
+
+          <div class="metric">
+            <div class="k">Theoretical body-fat %</div>
+            <div class="v" id="bfResult">20.0%</div>
+            <div class="r">Uses reference fat mass and projected total weight.</div>
+          </div>
+
+          <div class="metric">
+            <div class="k">Glycogen mass restored</div>
+            <div class="v" id="glycogenLb">0.44 lb</div>
+            <div class="r" id="glycogenGText">200 g restored</div>
+          </div>
+
+          <div class="metric">
+            <div class="k">Associated water</div>
+            <div class="v" id="waterResult">1.48 lb</div>
+            <div class="r" id="waterRangeText">1.19–1.76 lb</div>
+          </div>
+
+          <div class="metric">
+            <div class="k">Total refill mass</div>
+            <div class="v" id="refillResult">1.92 lb</div>
+            <div class="r">Glycogen + associated water at midpoint</div>
+          </div>
+
+          <div class="metric">
+            <div class="k">Skeletal muscle reading</div>
+            <div class="v">Not predicted</div>
+            <div class="r">A BIA scale may move this number with hydration, but there is no defensible universal conversion.</div>
+          </div>
+        </div>
+
+        <div class="summary" id="summaryText">
+          For this <b>light refeed</b>, the model assumes <b>200 g</b> of glycogen is restored. With 2.7–4.0 g of associated water per gram of glycogen, projected scale weight is approximately <b>145.4–146.0 lb</b>.
+        </div>
+
+        <table class="range-table">
+          <thead>
+            <tr>
+              <th>Scenario</th>
+              <th>Water/glycogen</th>
+              <th>Weight</th>
+              <th>BF%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Low</td>
+              <td id="lowRatioCell">2.7 g/g</td>
+              <td id="lowWeightCell">145.4 lb</td>
+              <td id="lowBfCell">20.0%</td>
+            </tr>
+            <tr>
+              <td>Midpoint</td>
+              <td id="midRatioCell">3.35 g/g</td>
+              <td id="midWeightCell">145.7 lb</td>
+              <td id="midBfCell">20.0%</td>
+            </tr>
+            <tr>
+              <td>High</td>
+              <td id="highRatioCell">4.0 g/g</td>
+              <td id="highWeightCell">146.0 lb</td>
+              <td id="highBfCell">19.9%</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="formula">
+          <b>Calculation</b><br>
+          <code>glycogen lb = glycogen g ÷ 453.59237</code><br>
+          <code>associated water lb = glycogen g × water ratio ÷ 453.59237</code><br>
+          <code>projected weight = depleted weight + glycogen lb + associated water lb + extra retained water</code><br>
+          <code>theoretical BF% = reference fat mass ÷ projected weight × 100</code>
+        </div>
+
+        <div class="footer-note">
+          This models body mass, not overnight tissue gain. Food mass, sodium, bowel contents, fluid balance, training, and a scale's proprietary BIA algorithm can push the observed reading outside the estimate.
+        </div>
+      </section>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  var GRAMS_PER_LB = 453.59237;
+  var PRESETS = { light: 200, heavy: 350 };
+
+  function el(id) {
+    return document.getElementById(id);
+  }
+
+  function readNumber(id, fallback) {
+    var node = el(id);
+    if (!node) return fallback;
+    var value = parseFloat(node.value);
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function format(value, digits) {
+    return Number.isFinite(value) ? value.toFixed(digits) : "—";
+  }
+
+  function selectedMode() {
+    var checked = document.querySelector('input[name="refeedMode"]:checked');
+    return checked ? checked.value : "light";
+  }
+
+  function glycogenForMode(mode) {
+    if (mode === "custom") {
+      return Math.max(0, readNumber("customGlycogen", 0));
+    }
+    return PRESETS[mode] || PRESETS.light;
+  }
+
+  function calculate(weight, fat, glycogenG, ratio, extraWater) {
+    var glycogenLb = glycogenG / GRAMS_PER_LB;
+    var waterLb = (glycogenG * ratio) / GRAMS_PER_LB;
+    var refillLb = glycogenLb + waterLb;
+    var projectedWeight = weight + refillLb + extraWater;
+    var bfPct = projectedWeight > 0 ? (fat / projectedWeight) * 100 : NaN;
+
+    return {
+      glycogenLb: glycogenLb,
+      waterLb: waterLb,
+      refillLb: refillLb,
+      projectedWeight: projectedWeight,
+      bfPct: bfPct
+    };
+  }
+
+  function update() {
+    var weight = readNumber("weight", NaN);
+    var fat = readNumber("fat", NaN);
+    var extraWater = readNumber("extraWater", 0);
+    var lowRatio = readNumber("waterLow", 2.7);
+    var highRatio = readNumber("waterHigh", 4.0);
+    var errorBox = el("errorBox");
+
+    if (!Number.isFinite(weight) || weight <= 0 || !Number.isFinite(fat) || fat < 0) {
+      errorBox.style.display = "block";
+      errorBox.textContent = "Enter a valid depleted weight and reference fat mass.";
+      return;
+    }
+
+    if (lowRatio < 0 || highRatio < 0) {
+      errorBox.style.display = "block";
+      errorBox.textContent = "Water ratios cannot be negative.";
+      return;
+    }
+
+    errorBox.style.display = "none";
+    errorBox.textContent = "";
+
+    if (lowRatio > highRatio) {
+      var temp = lowRatio;
+      lowRatio = highRatio;
+      highRatio = temp;
+    }
+
+    var mode = selectedMode();
+    var glycogenG = glycogenForMode(mode);
+    var midRatio = (lowRatio + highRatio) / 2;
+
+    var low = calculate(weight, fat, glycogenG, lowRatio, extraWater);
+    var mid = calculate(weight, fat, glycogenG, midRatio, extraWater);
+    var high = calculate(weight, fat, glycogenG, highRatio, extraWater);
+
+    el("weightResult").textContent = format(mid.projectedWeight, 1) + " lb";
+    el("weightRangeText").textContent =
+      "Range " + format(low.projectedWeight, 1) + "–" + format(high.projectedWeight, 1) + " lb";
+
+    el("bfResult").textContent = format(mid.bfPct, 1) + "%";
+
+    el("glycogenLb").textContent = format(mid.glycogenLb, 2) + " lb";
+    el("glycogenGText").textContent = format(glycogenG, 0) + " g restored";
+
+    el("waterResult").textContent = format(mid.waterLb, 2) + " lb";
+    el("waterRangeText").textContent =
+      format(low.waterLb, 2) + "–" + format(high.waterLb, 2) + " lb";
+
+    el("refillResult").textContent = format(mid.refillLb, 2) + " lb";
+
+    el("lowRatioCell").textContent = format(lowRatio, 1) + " g/g";
+    el("midRatioCell").textContent = format(midRatio, 2) + " g/g";
+    el("highRatioCell").textContent = format(highRatio, 1) + " g/g";
+
+    el("lowWeightCell").textContent = format(low.projectedWeight, 1) + " lb";
+    el("midWeightCell").textContent = format(mid.projectedWeight, 1) + " lb";
+    el("highWeightCell").textContent = format(high.projectedWeight, 1) + " lb";
+
+    el("lowBfCell").textContent = format(low.bfPct, 1) + "%";
+    el("midBfCell").textContent = format(mid.bfPct, 1) + "%";
+    el("highBfCell").textContent = format(high.bfPct, 1) + "%";
+
+    var modeLabel =
+      mode === "light" ? "light refeed" :
+      mode === "heavy" ? "heavy refeed" :
+      "custom refeed";
+
+    el("summaryText").innerHTML =
+      "For this <b>" + modeLabel + "</b>, the model assumes <b>" +
+      format(glycogenG, 0) + " g</b> of glycogen is restored. " +
+      "With <b>" + format(lowRatio, 1) + "–" + format(highRatio, 1) +
+      " g</b> of associated water per gram of glycogen, projected scale weight is approximately <b>" +
+      format(low.projectedWeight, 1) + "–" + format(high.projectedWeight, 1) +
+      " lb</b>. Using <b>" + format(fat, 1) +
+      " lb</b> as the reference fat mass, theoretical BF% is about <b>" +
+      format(high.bfPct, 1) + "–" + format(low.bfPct, 1) + "%</b>.";
+  }
+
+  function attachEvents() {
+    var controls = document.querySelectorAll(
+      'input[type="number"], input[name="refeedMode"], select'
+    );
+
+    for (var i = 0; i < controls.length; i++) {
+      controls[i].addEventListener("input", update);
+      controls[i].addEventListener("change", update);
+    }
+  }
+
+  try {
+    var status = el("jsStatus");
+    status.classList.add("ok");
+    status.textContent = "Calculator active — values will update immediately as you change inputs or refeed type.";
+
+    attachEvents();
+    update();
+  } catch (err) {
+    var statusNode = el("jsStatus");
+    if (statusNode) {
+      statusNode.classList.remove("ok");
+      statusNode.textContent = "Calculator error: " + (err && err.message ? err.message : String(err));
+    }
+    console.error(err);
+  }
+})();
+</script>
+</body>
+</html>

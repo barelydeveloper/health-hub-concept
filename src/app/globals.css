@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #0c0f14;
+  color: #f4f7fb;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid #7dd3c7;
+  outline-offset: 2px;
+}
+
+input, select, textarea, button {
+  font: inherit;
+}

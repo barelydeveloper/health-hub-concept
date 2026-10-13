@@ -1,0 +1,5 @@
+com.samsung.health.nutrition,1,1
+start_time,calorie,protein,carbohydrate,dietary_fiber,total_fat,sodium
+2026-06-03 08:00:00,100.5,10.5,20.25,0.5,5.5,100.5
+2026-06-03 13:00:00,50.25,1.25,1.5,0.25,1.25,10.25
+not-a-date,999,999,999,999,999,999

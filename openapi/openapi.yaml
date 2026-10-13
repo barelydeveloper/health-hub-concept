@@ -1,0 +1,378 @@
+openapi: 3.1.0
+info:
+  title: Fitness Intelligence API
+  version: 2.0.0
+  description: |
+    Personal fitness records. Writes require authentication and an Idempotency-Key.
+    Browser sessions use the httpOnly fi_session cookie. External clients send Authorization Bearer.
+    Hydration-adjusted values and forecasts are estimates, not guaranteed outcomes.
+servers:
+  - url: https://example.com
+    description: Replace with the deployed HTTPS origin.
+security:
+  - bearerAuth: []
+paths:
+  /api/health:
+    get:
+      security: []
+      summary: Liveness
+      responses:
+        "200":
+          description: Process is up
+  /api/ready:
+    get:
+      security: []
+      summary: Readiness, including a database probe
+      responses:
+        "200":
+          description: Database accepts queries
+        "503":
+          description: Database is unavailable
+  /api/v1/profile:
+    get:
+      summary: Read the signed-in profile
+      responses:
+        "200": { description: Profile }
+        "401": { description: Unauthorized }
+    patch:
+      summary: Update profile fields
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: Updated }
+  /api/v1/dashboard:
+    get:
+      summary: Dashboard summary computed from stored records
+      responses:
+        "200": { description: Summary }
+  /api/v1/workouts:
+    get:
+      summary: List workouts
+      parameters:
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { description: Workout page }
+    post:
+      summary: Create a workout
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startedAt, exercises]
+              properties:
+                startedAt: { type: string, format: date-time }
+                name: { type: string }
+                exercises:
+                  type: array
+                  items:
+                    type: object
+                    required: [exerciseSlug, sets]
+                    properties:
+                      exerciseSlug: { type: string }
+                      sets:
+                        type: array
+                        items: { $ref: "#/components/schemas/Set" }
+            examples:
+              pullups:
+                value:
+                  startedAt: "2026-10-09T15:00:00.000Z"
+                  exercises:
+                    - exerciseSlug: pull-up
+                      sets:
+                        - { modality: bodyweight, reps: 2, bodyWeightLb: 151 }
+                        - { modality: bodyweight, reps: 2, bodyWeightLb: 151 }
+                        - { modality: bodyweight, reps: 1, bodyWeightLb: 151 }
+      responses:
+        "201": { description: Created }
+        "400": { description: Invalid body or missing idempotency key }
+        "409": { description: Idempotency key reused with a different body }
+  /api/v1/workouts/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Read one workout
+      responses:
+        "200": { description: Workout }
+        "404": { description: Not found for this user }
+    patch:
+      summary: Update session notes or timing
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: Updated }
+  /api/v1/workouts/{id}/sets:
+    post:
+      summary: Append sets
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [exerciseSlug, sets]
+      responses:
+        "201": { description: Workout with new sets }
+  /api/v1/workouts/{id}/sets/{setId}:
+    patch:
+      summary: Correct a set by writing a new revision
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: setId, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Set" }
+      responses:
+        "200": { description: Corrected }
+    delete:
+      summary: Soft-delete a set
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: setId, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      responses:
+        "200": { description: Removed }
+  /api/v1/exercises/{id}/history:
+    get:
+      summary: Exercise history, last-session comparison, and records
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: Exercise slug }
+      responses:
+        "200": { description: History }
+  /api/v1/personal-records:
+    get:
+      summary: Personal records and muscle-exposure heuristic
+      responses:
+        "200": { description: Records }
+  /api/v1/measurements:
+    get:
+      summary: Body metrics and tape measurements
+      parameters:
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200": { description: Measurements }
+    post:
+      summary: Record body composition or a tape measurement
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+            examples:
+              weighIn:
+                value: { recordedAt: "2026-10-13T11:00:00.000Z", weightLb: 151.4, bodyFatPercent: 18.9 }
+      responses:
+        "201": { description: Created }
+  /api/v1/measurements/{id}:
+    patch:
+      summary: Correct a measurement. The previous row is kept and marked superseded.
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: number }
+      responses:
+        "200": { description: New revision }
+    delete:
+      summary: Soft-delete a measurement
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      responses:
+        "200": { description: Deleted }
+  /api/v1/body-composition/trends:
+    get:
+      summary: Raw series beside hydration-context estimates
+      description: normalization.status is insufficient_data when there is not enough stable body-water data.
+      parameters:
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+      responses:
+        "200": { description: Analysis }
+  /api/v1/nutrition:
+    get:
+      summary: Food entries and recomputed daily summaries
+      responses:
+        "200": { description: Nutrition }
+    post:
+      summary: Record food and macros
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "201": { description: Created }
+  /api/v1/goals:
+    get:
+      summary: Goals with linear progress estimates
+      responses:
+        "200": { description: Goals }
+    post:
+      summary: Create a goal
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "201": { description: Created }
+  /api/v1/forecasts:
+    get:
+      summary: Linear forecast, plateau check, and saved scenarios
+      parameters:
+        - { name: mode, in: query, schema: { type: string, enum: [conservative, expected, aggressive] } }
+        - { name: intakeKcal, in: query, schema: { type: number } }
+        - { name: tdeeKcal, in: query, schema: { type: number } }
+        - { name: horizonDays, in: query, schema: { type: integer } }
+      responses:
+        "200": { description: Estimates, not guaranteed outcomes }
+    post:
+      summary: Save a capped forecast scenario
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "201": { description: Saved }
+  /api/v1/imports:
+    get:
+      summary: Import batches
+      responses:
+        "200": { description: Batches }
+    post:
+      summary: Import Samsung Health CSV JSON or a ZIP archive
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+          application/zip:
+            schema: { type: string, format: binary }
+      responses:
+        "201": { description: Added, skipped, revised, and error counts }
+  /api/v1/recovery:
+    get:
+      summary: Sleep and activity logs
+      responses:
+        "200": { description: Logs }
+  /api/v1/tokens:
+    get:
+      summary: List API tokens. Raw secrets are never returned.
+      responses:
+        "200": { description: Tokens }
+    post:
+      summary: Create a token. The raw value is returned once.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: { type: string }
+                scopes:
+                  type: array
+                  items: { type: string, enum: [read, write, import] }
+      responses:
+        "201": { description: Token }
+  /api/v1/tokens/{id}:
+    delete:
+      summary: Revoke a token
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      responses:
+        "200": { description: Revoked }
+  /api/v1/audit:
+    get:
+      summary: Recent audit events
+      responses:
+        "200": { description: Audit rows }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    From:
+      name: from
+      in: query
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      schema: { type: string, format: date-time }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+  schemas:
+    Set:
+      type: object
+      required: [modality]
+      properties:
+        modality:
+          type: string
+          enum: [conventional, eccentric_only, isometric, assisted, bodyweight, weighted_bodyweight]
+        reps: { type: integer }
+        durationSec: { type: number }
+        externalLoadLb: { type: number }
+        addedLoadLb: { type: number }
+        assistanceLb: { type: number }
+        bodyWeightLb: { type: number }
+        rpe: { type: number }
+        rir: { type: number }
+        isWarmup: { type: boolean }
+        side: { type: string, enum: [left, right, both] }

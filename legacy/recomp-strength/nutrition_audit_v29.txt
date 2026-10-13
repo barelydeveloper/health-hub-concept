@@ -1,0 +1,27 @@
+RECOMP STRENGTH V29 — NUTRITION RE-AUDIT
+
+Built-in Food catalog was rechecked against current manufacturer labels and USDA reference data.
+
+CORRECTIONS
+- 93/7 ground beef, 4 fl oz scoop (~58g cooked crumbles): 117 kcal, 16.8g protein, 0g carbs, 5.5g fat.
+- 96/4 ground beef, same scoop: 104 kcal, 17.0g protein, 0g carbs, 3.8g fat. This remains an estimate because USDA does not publish a cooked 96/4 crumbles entry; it is interpolated between cooked 95/5 and 97/3.
+- Green peas: 62 kcal, 4.1g protein, 11.4g carbs, 0.2g fat, 3.6g fiber for the 80g half-cup frozen/cooked/drained reference.
+- Kale: corrected the mixed household-measure provenance. 4 fl oz = ~59g using the current USDA FDC 169238 cup weight; ~21 kcal, 1.7g protein, 3.1g carbs, 0.7g fat, 2.4g fiber.
+- Jasmine rice: 79g cooked half cup -> ~103 kcal, 2.2g protein, 22.3g carbs, 0.2g fat, 0.3g fiber.
+- Premier Café Latte / White Chocolate Raspberry labels report <1g fiber. Numeric estimates of 0.8g / 0.6g are used only so daily fiber totals can remain numeric.
+
+VERIFIED WITHOUT MACRO CHANGES
+- 85/15 cooked ground beef reference
+- cooked skinless chicken breast
+- large cooked egg
+- Goya black beans label macros
+- Goya red kidney beans label macros
+- cooked broccoli
+- cooked spinach
+- Premier Protein Strawberries & Cream, Cookies & Cream, and Chocolate Covered Strawberry
+- Bumble Bee Solid White Albacore in Water
+- Lifeway Plain Lowfat Kefir
+- Kirkland Signature Organic Plain Nonfat Greek Yogurt
+
+MEASUREMENT NOTE
+A 4 fl oz scoop is a volume measurement, not 4 oz by weight. Gram weights are household-measure estimates and will vary with how tightly food is packed and how much moisture remains after cooking/draining. For the most precise real-world tracking, weigh the cooked/drained portion in grams and edit the Food reference if your own consistent scoop differs.

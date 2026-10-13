@@ -1,0 +1,5 @@
+com.samsung.shealth.exercise,1,1
+datauuid,exercise_type,start_time,duration,distance,mean_speed,max_speed,calorie,mean_heart_rate,max_heart_rate,min_heart_rate,mean_cadence
+walk-uuid,1001,2026-06-05 10:00:00,600000,100,1,2,50,100,160,80,150
+walk-uuid,1001,2026-06-05 10:00:00,1800000,1609.344,1.5,3,220,140,180,90,170
+lift-uuid,15004,2026-06-05 18:00:00,3600000,0,,,300,110,150,90,

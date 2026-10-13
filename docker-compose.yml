@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: fitness
+      POSTGRES_PASSWORD: fitness
+      POSTGRES_DB: fitness_intelligence
+    ports:
+      - "54329:5432"
+    volumes:
+      - fitness_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitness -d fitness_intelligence"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  fitness_pg:

@@ -1,0 +1,6 @@
+com.samsung.health.weight,1,1
+start_time,weight,body_fat,body_fat_mass,skeletal_muscle_mass,total_body_water,datauuid,skeletal_muscle
+
+2026-06-01 09:30:00,69.127,20.5,14.2,30.1,40,win-uuid,41
+2026-06-01 07:00:00,68,19,13.5,28,38,early-uuid,40
+2026-06-01 11:00:00,150,30,45,35,50,heavy-uuid,42

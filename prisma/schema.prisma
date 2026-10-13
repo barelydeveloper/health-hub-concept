@@ -1,0 +1,666 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ValueOrigin {
+  measured
+  user_entered
+  imported
+  estimated
+  hydration_normalized
+  forecast
+  fixture
+}
+
+enum SourceSystem {
+  manual
+  samsung_health
+  fixture
+  api
+  calculation
+}
+
+enum Sex {
+  female
+  male
+  unspecified
+}
+
+enum SetModality {
+  conventional
+  eccentric_only
+  isometric
+  assisted
+  bodyweight
+  weighted_bodyweight
+}
+
+enum LoadModel {
+  external
+  bodyweight
+  weighted_bodyweight
+  assisted
+  isometric_duration
+  eccentric_only
+}
+
+enum Side {
+  left
+  right
+  both
+}
+
+enum BodyMetricKind {
+  weight
+  body_fat_percent
+  fat_mass
+  fat_free_mass
+  skeletal_muscle
+}
+
+enum CircumferenceSite {
+  neck
+  chest
+  waist
+  hips
+  thigh_left
+  thigh_right
+  upper_arm_left
+  upper_arm_right
+  other
+}
+
+enum GoalType {
+  weight
+  body_fat_percent
+  fat_mass
+  circumference
+  pull_up_reps
+  hold_duration
+  dumbbell_press_weight
+  deadlift_weight
+  training_frequency
+  calories
+  protein
+  custom
+}
+
+enum GoalStatus {
+  active
+  achieved
+  paused
+  abandoned
+}
+
+enum ImportStatus {
+  pending
+  running
+  completed
+  completed_with_errors
+  failed
+}
+
+enum AuditAction {
+  create
+  update
+  correct
+  delete
+  import
+  login
+  token_create
+  token_revoke
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  profile           Profile?
+  apiTokens         ApiToken[]
+  auditLogs         AuditLog[]
+  idempotencyKeys   IdempotencyKey[]
+  importBatches     ImportBatch[]
+  sourcePayloads    SourcePayload[]
+  bodyMetrics       BodyMetric[]
+  bodyWaterReadings BodyWaterReading[]
+  circumferences    CircumferenceReading[]
+  exercises         Exercise[]
+  workoutSessions   WorkoutSession[]
+  foods             Food[]
+  nutritionEntries  NutritionEntry[]
+  dailyNutrition    DailyNutritionSummary[]
+  activityDays      ActivityDay[]
+  sleepSessions     SleepSession[]
+  goals             Goal[]
+  metricSnapshots   MetricSnapshot[]
+  personalRecords   PersonalRecord[]
+  forecastScenarios ForecastScenario[]
+  syncCheckpoints   SyncCheckpoint[]
+  calculationVersions CalculationVersion[]
+
+  @@map("users")
+}
+
+model Profile {
+  userId       String    @id @map("user_id")
+  displayName  String?   @map("display_name")
+  heightInches Decimal?  @map("height_inches") @db.Decimal(6, 2)
+  sex          Sex       @default(unspecified)
+  birthDate    DateTime? @map("birth_date") @db.Date
+  maxHeartRate Int?      @map("max_heart_rate")
+  timezone     String    @default("America/New_York")
+  notes        String?
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  name       String
+  tokenHash  String    @unique @map("token_hash")
+  scopes     String[]
+  expiresAt  DateTime? @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_tokens")
+}
+
+model AuditLog {
+  id             String      @id @default(cuid())
+  userId         String      @map("user_id")
+  actorTokenId   String?     @map("actor_token_id")
+  action         AuditAction
+  entityType     String      @map("entity_type")
+  entityId       String?     @map("entity_id")
+  idempotencyKey String?     @map("idempotency_key")
+  before         Json?
+  after          Json?
+  createdAt      DateTime    @default(now()) @map("created_at")
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  key          String
+  method       String
+  path         String
+  requestHash  String   @map("request_hash")
+  statusCode   Int?     @map("status_code")
+  responseBody Json?    @map("response_body")
+  lockedAt     DateTime @default(now()) @map("locked_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@map("idempotency_keys")
+}
+
+model ImportBatch {
+  id           String       @id @default(cuid())
+  userId       String       @map("user_id")
+  sourceSystem SourceSystem @map("source_system")
+  status       ImportStatus @default(pending)
+  label        String?
+  summary      Json?
+  startedAt    DateTime     @default(now()) @map("started_at")
+  finishedAt   DateTime?    @map("finished_at")
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files        ImportFile[]
+  errors       ImportRowError[]
+  payloads     SourcePayload[]
+
+  @@index([userId, startedAt])
+  @@map("import_batches")
+}
+
+model ImportFile {
+  id             String      @id @default(cuid())
+  batchId        String      @map("batch_id")
+  name           String
+  supported      Boolean
+  dataset        String?
+  byteSize       Int?        @map("byte_size")
+  contentHash    String?     @map("content_hash")
+  recordsRead    Int         @default(0) @map("records_read")
+  recordsAccepted Int        @default(0) @map("records_accepted")
+  batch          ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@map("import_files")
+}
+
+model ImportRowError {
+  id       String      @id @default(cuid())
+  batchId  String      @map("batch_id")
+  fileName String      @map("file_name")
+  row      Int?
+  message  String
+  batch    ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@map("import_row_errors")
+}
+
+model SyncCheckpoint {
+  id           String       @id @default(cuid())
+  userId       String       @map("user_id")
+  sourceSystem SourceSystem @map("source_system")
+  cursor       String?
+  lastSyncedAt DateTime?    @map("last_synced_at")
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sourceSystem])
+  @@map("sync_checkpoints")
+}
+
+model SourcePayload {
+  id           String       @id @default(cuid())
+  userId       String       @map("user_id")
+  batchId      String?      @map("batch_id")
+  sourceSystem SourceSystem @map("source_system")
+  sourceId     String       @map("source_id")
+  contentHash  String       @map("content_hash")
+  payload      Json
+  createdAt    DateTime     @default(now()) @map("created_at")
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batch        ImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([userId, sourceSystem, sourceId])
+  @@map("source_payloads")
+}
+
+model BodyMetric {
+  id              String         @id @default(cuid())
+  userId          String         @map("user_id")
+  kind            BodyMetricKind
+  value           Decimal        @db.Decimal(10, 3)
+  canonicalUnit   String         @map("canonical_unit")
+  originalValue   Decimal?       @map("original_value") @db.Decimal(12, 4)
+  originalUnit    String?        @map("original_unit")
+  valueOrigin     ValueOrigin    @map("value_origin")
+  recordedAt      DateTime       @map("recorded_at")
+  readingGroupId  String?        @map("reading_group_id")
+  sourceSystem    SourceSystem   @map("source_system")
+  sourceId        String?        @map("source_id")
+  sourcePayloadId String?        @map("source_payload_id")
+  supersedesId    String?        @map("supersedes_id")
+  supersededAt    DateTime?      @map("superseded_at")
+  deletedAt       DateTime?      @map("deleted_at")
+  note            String?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind, recordedAt])
+  @@index([userId, sourceSystem, sourceId])
+  @@map("body_metrics")
+}
+
+model BodyWaterReading {
+  id              String       @id @default(cuid())
+  userId          String       @map("user_id")
+  valueLb         Decimal      @map("value_lb") @db.Decimal(10, 3)
+  originalValue   Decimal?     @map("original_value") @db.Decimal(12, 4)
+  originalUnit    String?      @map("original_unit")
+  valueOrigin     ValueOrigin  @map("value_origin")
+  recordedAt      DateTime     @map("recorded_at")
+  readingGroupId  String?      @map("reading_group_id")
+  sourceSystem    SourceSystem @map("source_system")
+  sourceId        String?      @map("source_id")
+  sourcePayloadId String?      @map("source_payload_id")
+  supersedesId    String?      @map("supersedes_id")
+  supersededAt    DateTime?    @map("superseded_at")
+  deletedAt       DateTime?    @map("deleted_at")
+  note            String?
+  createdAt       DateTime     @default(now()) @map("created_at")
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedAt])
+  @@index([userId, sourceSystem, sourceId])
+  @@map("body_water_readings")
+}
+
+model CircumferenceReading {
+  id             String             @id @default(cuid())
+  userId         String             @map("user_id")
+  site           CircumferenceSite
+  siteLabel      String?            @map("site_label")
+  valueInches    Decimal            @map("value_inches") @db.Decimal(8, 3)
+  originalValue  Decimal?           @map("original_value") @db.Decimal(10, 4)
+  originalUnit   String?            @map("original_unit")
+  valueOrigin    ValueOrigin        @map("value_origin")
+  recordedAt     DateTime           @map("recorded_at")
+  readingGroupId String?            @map("reading_group_id")
+  sourceSystem   SourceSystem       @map("source_system")
+  sourceId       String?            @map("source_id")
+  supersedesId   String?            @map("supersedes_id")
+  supersededAt   DateTime?          @map("superseded_at")
+  deletedAt      DateTime?          @map("deleted_at")
+  note           String?
+  createdAt      DateTime           @default(now()) @map("created_at")
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, site, recordedAt])
+  @@map("circumference_readings")
+}
+
+model Exercise {
+  id            String            @id @default(cuid())
+  userId        String            @map("user_id")
+  slug          String
+  name          String
+  modality      SetModality
+  loadModel     LoadModel         @map("load_model")
+  muscleCredits Json              @map("muscle_credits")
+  allowE1rm     Boolean           @default(false) @map("allow_e1rm")
+  equipment     String?
+  notes         String?
+  createdAt     DateTime          @default(now()) @map("created_at")
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aliases       ExerciseAlias[]
+  performances  WorkoutExercise[]
+  personalRecords PersonalRecord[]
+
+  @@unique([userId, slug])
+  @@map("exercises")
+}
+
+model ExerciseAlias {
+  id         String   @id @default(cuid())
+  exerciseId String   @map("exercise_id")
+  alias      String
+  exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([exerciseId, alias])
+  @@map("exercise_aliases")
+}
+
+model WorkoutSession {
+  id           String       @id @default(cuid())
+  userId       String       @map("user_id")
+  startedAt    DateTime     @map("started_at")
+  endedAt      DateTime?    @map("ended_at")
+  timezone     String       @default("America/New_York")
+  name         String?
+  notes        String?
+  sourceSystem SourceSystem @map("source_system")
+  sourceId     String?      @map("source_id")
+  valueOrigin  ValueOrigin  @map("value_origin")
+  deletedAt    DateTime?    @map("deleted_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercises    WorkoutExercise[]
+
+  @@index([userId, startedAt])
+  @@index([userId, sourceSystem, sourceId])
+  @@map("workout_sessions")
+}
+
+model WorkoutExercise {
+  id         String         @id @default(cuid())
+  sessionId  String         @map("session_id")
+  exerciseId String         @map("exercise_id")
+  position   Int
+  notes      String?
+  session    WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exercise   Exercise       @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  sets       WorkoutSet[]
+
+  @@index([sessionId])
+  @@index([exerciseId])
+  @@map("workout_exercises")
+}
+
+model WorkoutSet {
+  id                String         @id @default(cuid())
+  workoutExerciseId String         @map("workout_exercise_id")
+  position          Int
+  modality          SetModality
+  reps              Int?
+  durationSec       Decimal?       @map("duration_sec") @db.Decimal(8, 2)
+  externalLoadLb    Decimal?       @map("external_load_lb") @db.Decimal(8, 2)
+  addedLoadLb       Decimal?       @map("added_load_lb") @db.Decimal(8, 2)
+  assistanceLb      Decimal?       @map("assistance_lb") @db.Decimal(8, 2)
+  bodyWeightLb      Decimal?       @map("body_weight_lb") @db.Decimal(8, 2)
+  rpe               Decimal?       @db.Decimal(4, 2)
+  rir               Decimal?       @db.Decimal(4, 2)
+  side              Side?
+  isWarmup          Boolean        @default(false) @map("is_warmup")
+  tempo             String?
+  effort            String?
+  notes             String?
+  sourceId          String?        @map("source_id")
+  supersedesId      String?        @map("supersedes_id")
+  supersededAt      DateTime?      @map("superseded_at")
+  deletedAt         DateTime?      @map("deleted_at")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  workoutExercise   WorkoutExercise @relation(fields: [workoutExerciseId], references: [id], onDelete: Cascade)
+
+  @@index([workoutExerciseId, position])
+  @@map("workout_sets")
+}
+
+model Food {
+  id            String       @id @default(cuid())
+  userId        String       @map("user_id")
+  name          String
+  brand         String?
+  servingGrams  Decimal?     @map("serving_grams") @db.Decimal(8, 2)
+  calories      Decimal?     @db.Decimal(8, 2)
+  proteinG      Decimal?     @map("protein_g") @db.Decimal(8, 2)
+  carbG         Decimal?     @map("carb_g") @db.Decimal(8, 2)
+  fatG          Decimal?     @map("fat_g") @db.Decimal(8, 2)
+  fiberG        Decimal?     @map("fiber_g") @db.Decimal(8, 2)
+  sourceSystem  SourceSystem @map("source_system")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries       NutritionEntry[]
+
+  @@index([userId, name])
+  @@map("foods")
+}
+
+model NutritionEntry {
+  id           String       @id @default(cuid())
+  userId       String       @map("user_id")
+  foodId       String?      @map("food_id")
+  recordedAt   DateTime     @map("recorded_at")
+  name         String
+  calories     Decimal?     @db.Decimal(8, 2)
+  proteinG     Decimal?     @map("protein_g") @db.Decimal(8, 2)
+  carbG        Decimal?     @map("carb_g") @db.Decimal(8, 2)
+  fatG         Decimal?     @map("fat_g") @db.Decimal(8, 2)
+  fiberG       Decimal?     @map("fiber_g") @db.Decimal(8, 2)
+  sodiumMg     Decimal?     @map("sodium_mg") @db.Decimal(8, 2)
+  quantity     Decimal?     @db.Decimal(8, 3)
+  meal         String?
+  valueOrigin  ValueOrigin  @map("value_origin")
+  sourceSystem SourceSystem @map("source_system")
+  sourceId     String?      @map("source_id")
+  supersedesId String?      @map("supersedes_id")
+  supersededAt DateTime?    @map("superseded_at")
+  deletedAt    DateTime?    @map("deleted_at")
+  note         String?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  food         Food?        @relation(fields: [foodId], references: [id], onDelete: SetNull)
+
+  @@index([userId, recordedAt])
+  @@index([userId, sourceSystem, sourceId])
+  @@map("nutrition_entries")
+}
+
+model DailyNutritionSummary {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id")
+  date               DateTime @db.Date
+  calories           Decimal  @db.Decimal(8, 2)
+  proteinG           Decimal  @map("protein_g") @db.Decimal(8, 2)
+  carbG              Decimal  @map("carb_g") @db.Decimal(8, 2)
+  fatG               Decimal  @map("fat_g") @db.Decimal(8, 2)
+  calculationVersion String   @map("calculation_version")
+  inputHash          String   @map("input_hash")
+  computedAt         DateTime @default(now()) @map("computed_at")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date, calculationVersion])
+  @@map("daily_nutrition_summaries")
+}
+
+model ActivityDay {
+  id              String       @id @default(cuid())
+  userId          String       @map("user_id")
+  recordedOn      DateTime     @map("recorded_on") @db.Date
+  steps           Int?
+  activeCalories  Decimal?     @map("active_calories") @db.Decimal(8, 2)
+  workoutMinutes  Decimal?     @map("workout_minutes") @db.Decimal(8, 2)
+  distanceMi      Decimal?     @map("distance_mi") @db.Decimal(8, 3)
+  heartRateAvg    Decimal?     @map("heart_rate_avg") @db.Decimal(6, 2)
+  valueOrigin     ValueOrigin  @map("value_origin")
+  sourceSystem    SourceSystem @map("source_system")
+  sourceId        String?      @map("source_id")
+  supersedesId    String?      @map("supersedes_id")
+  supersededAt    DateTime?    @map("superseded_at")
+  deletedAt       DateTime?    @map("deleted_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedOn])
+  @@index([userId, sourceSystem, sourceId])
+  @@map("activity_days")
+}
+
+model SleepSession {
+  id            String       @id @default(cuid())
+  userId        String       @map("user_id")
+  startedAt     DateTime     @map("started_at")
+  endedAt       DateTime?    @map("ended_at")
+  durationHours Decimal      @map("duration_hours") @db.Decimal(6, 3)
+  stages        Json?
+  valueOrigin   ValueOrigin  @map("value_origin")
+  sourceSystem  SourceSystem @map("source_system")
+  sourceId      String?      @map("source_id")
+  supersedesId  String?      @map("supersedes_id")
+  supersededAt  DateTime?    @map("superseded_at")
+  deletedAt     DateTime?    @map("deleted_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([userId, sourceSystem, sourceId])
+  @@map("sleep_sessions")
+}
+
+model Goal {
+  id                 String             @id @default(cuid())
+  userId             String             @map("user_id")
+  type               GoalType
+  name               String
+  targetValue        Decimal            @map("target_value") @db.Decimal(10, 3)
+  targetHigh         Decimal?           @map("target_high") @db.Decimal(10, 3)
+  targetUnit         String             @map("target_unit")
+  targetDate         DateTime?          @map("target_date")
+  direction          String?
+  circumferenceSite  CircumferenceSite? @map("circumference_site")
+  exerciseSlug       String?            @map("exercise_slug")
+  status             GoalStatus         @default(active)
+  sourceSystem       SourceSystem       @map("source_system")
+  notes              String?
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checkpoints        GoalCheckpoint[]
+
+  @@index([userId, status])
+  @@map("goals")
+}
+
+model GoalCheckpoint {
+  id         String   @id @default(cuid())
+  goalId     String   @map("goal_id")
+  recordedAt DateTime @map("recorded_at")
+  value      Decimal  @db.Decimal(10, 3)
+  note       String?
+  goal       Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId, recordedAt])
+  @@map("goal_checkpoints")
+}
+
+model CalculationVersion {
+  id          String   @id @default(cuid())
+  userId      String?  @map("user_id")
+  key         String
+  version     String
+  description String
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([key, version])
+  @@map("calculation_versions")
+}
+
+model MetricSnapshot {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id")
+  calculationVersion String   @map("calculation_version")
+  inputHash          String   @map("input_hash")
+  payload            Json
+  computedAt         DateTime @default(now()) @map("computed_at")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, calculationVersion, computedAt])
+  @@map("metric_snapshots")
+}
+
+model PersonalRecord {
+  id                 String    @id @default(cuid())
+  userId             String    @map("user_id")
+  exerciseId         String    @map("exercise_id")
+  kind               String
+  value              Decimal   @db.Decimal(10, 3)
+  unit               String
+  achievedAt         DateTime  @map("achieved_at")
+  setId              String?   @map("set_id")
+  calculationVersion String    @map("calculation_version")
+  inputHash          String    @map("input_hash")
+  computedAt         DateTime  @default(now()) @map("computed_at")
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise           Exercise  @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@index([userId, exerciseId, kind])
+  @@map("personal_records")
+}
+
+model ForecastScenario {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id")
+  name               String
+  assumptions        Json
+  result             Json
+  calculationVersion String   @map("calculation_version")
+  calculatedAt       DateTime @default(now()) @map("calculated_at")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, calculatedAt])
+  @@map("forecast_scenarios")
+}

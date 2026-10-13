@@ -1,0 +1,7 @@
+{
+  "schema_version": "v1",
+  "name": "Fitness Intelligence",
+  "description": "Read and update one person's fitness records through the authenticated API.",
+  "auth": { "type": "bearer" },
+  "openapi": "./openapi.yaml"
+}
