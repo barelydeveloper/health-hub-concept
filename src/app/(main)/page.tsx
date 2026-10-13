@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Panel, Stat } from "@/components/Shell";
+import { Empty, Loading, PageHeader } from "@/components/ui";
 import { api, formatNumber } from "@/lib/api";
 
 interface Dashboard {
@@ -26,47 +27,58 @@ interface Dashboard {
 
 export default function OverviewPage() {
   const query = useQuery({ queryKey: ["dashboard"], queryFn: () => api<Dashboard>("/api/v1/dashboard") });
-  if (query.error) return <p role="alert">{query.error.message}</p>;
-  if (query.isLoading || !query.data) return <p>Loading overview…</p>;
+  if (query.error) return <p role="alert" className="text-sm text-danger">{query.error.message}</p>;
+  if (query.isLoading || !query.data) return <Loading label="Loading overview…" />;
   const data = query.data.data;
   const body = data.body;
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Overview</h1>
+    <div className="space-y-5">
+      <PageHeader title="Overview" lede="Latest stored weight, the last session, and strength milestones. Estimates stay labeled beside the raw reading." />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Stat label="Weight" value={body ? `${formatNumber(body.weightLb)} lb` : "—"} detail={body ? new Date(body.recordedAt).toLocaleDateString() : "No weigh-ins"} />
-        <Stat label="Body fat, raw" value={body?.bodyFatPercent == null ? "—" : `${formatNumber(body.bodyFatPercent)}%`} />
-        <Stat label="Body fat, normalized" value={body?.normalizedBodyFatPercent == null ? "—" : `${formatNumber(body.normalizedBodyFatPercent)}%`} detail={body?.normalizedBodyFatPercent != null ? "Estimate, shown beside the raw value" : body?.normalization.reason ?? "No hydration-adjusted value for this reading"} />
+        <Stat label="Weight" tone="measured" value={body ? `${formatNumber(body.weightLb)} lb` : "—"} detail={body ? new Date(body.recordedAt).toLocaleDateString() : "No weigh-ins"} />
+        <Stat label="Body fat, raw" tone="measured" value={body?.bodyFatPercent == null ? "—" : `${formatNumber(body.bodyFatPercent)}%`} detail="Measured" />
+        <Stat label="Body fat, normalized" tone="estimate" value={body?.normalizedBodyFatPercent == null ? "—" : `${formatNumber(body.normalizedBodyFatPercent)}%`} detail={body?.normalizedBodyFatPercent != null ? "Estimate, shown beside the raw value" : body?.normalization.reason ?? "No hydration-adjusted value for this reading"} />
         <Stat label="Fat mass" value={body?.fatMassLb == null ? "—" : `${formatNumber(body.fatMassLb)} lb`} />
         <Stat label="Fat-free mass" value={body?.fatFreeMassLb == null ? "—" : `${formatNumber(body.fatFreeMassLb)} lb`} detail="Not the same thing as muscle" />
         <Stat label="7-day steps" value={formatNumber(data.activity.steps, 0)} />
       </div>
-      <Panel title="Recent workout">
-        {data.recentWorkout ? (
-          <ul className="space-y-1 text-sm">
-            {data.recentWorkout.exercises.map((exercise) => (
-              <li key={exercise.exerciseName}>{exercise.exerciseName}: {exercise.totalReps} reps, best set {exercise.bestReps ?? "—"}</li>
-            ))}
-          </ul>
-        ) : <p className="text-sm text-muted">No workouts yet.</p>}
-      </Panel>
-      <Panel title="Personal records">
-        {data.personalRecords.length === 0 ? <p className="text-sm text-muted">No performances yet.</p> : (
-          <ul className="space-y-1 text-sm">
-            {data.personalRecords.map((record) => (
-              <li key={record.exerciseId}>
-                {record.exerciseId}: {record.bestReps != null ? `${record.bestReps} reps` : ""} {record.bestDurationSec != null ? `${formatNumber(record.bestDurationSec, 0)} s` : ""} {record.bestE1rmLb != null ? `e1RM ${formatNumber(record.bestE1rmLb)} lb` : ""} {record.bestEccentricLoadLb != null ? `eccentric ${formatNumber(record.bestEccentricLoadLb, 0)} lb` : ""}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Panel title="Recent workout" note={data.recentWorkout ? data.recentWorkout.startedAt.slice(0, 10) : undefined}>
+          {data.recentWorkout ? (
+            <ul className="space-y-2 text-sm">
+              {data.recentWorkout.exercises.map((exercise) => (
+                <li key={exercise.exerciseName} className="flex items-baseline justify-between gap-3 border-t border-line pt-2 first:border-t-0 first:pt-0">
+                  <span>{exercise.exerciseName}</span>
+                  <span className="num text-muted">{exercise.totalReps} reps, best set {exercise.bestReps ?? "—"}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <Empty>No workouts yet.</Empty>}
+        </Panel>
+        <Panel title="Personal records">
+          {data.personalRecords.length === 0 ? <Empty>No performances yet.</Empty> : (
+            <ul className="space-y-2 text-sm">
+              {data.personalRecords.map((record) => (
+                <li key={record.exerciseId} className="border-t border-line pt-2 first:border-t-0 first:pt-0">
+                  <span className="font-medium">{record.exerciseId}</span>
+                  <span className="num ml-2 text-muted">{record.bestReps != null ? `${record.bestReps} reps` : ""} {record.bestDurationSec != null ? `${formatNumber(record.bestDurationSec, 0)} s` : ""} {record.bestE1rmLb != null ? `e1RM ${formatNumber(record.bestE1rmLb)} lb` : ""} {record.bestEccentricLoadLb != null ? `eccentric ${formatNumber(record.bestEccentricLoadLb, 0)} lb` : ""}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+      <Panel title="Goals">
+        {data.goals.length === 0 ? <Empty>No goals yet.</Empty> : (
+          <ul className="space-y-2 text-sm">
+            {data.goals.map((goal) => (
+              <li key={goal.name} className="flex flex-col gap-1 border-t border-line pt-2 first:border-t-0 first:pt-0 sm:flex-row sm:items-baseline sm:justify-between">
+                <span>{goal.name}</span>
+                <span className="num text-muted">latest {formatNumber(goal.projection?.latest ?? null)} / {formatNumber(goal.targetValue, 1)} {goal.targetUnit} <span className="badge ml-2">{goal.projection?.status ?? "no series"}</span></span>
               </li>
             ))}
           </ul>
         )}
-      </Panel>
-      <Panel title="Goals">
-        <ul className="space-y-1 text-sm">
-          {data.goals.map((goal) => (
-            <li key={goal.name}>{goal.name}: latest {formatNumber(goal.projection?.latest ?? null)} / {formatNumber(goal.targetValue, 1)} {goal.targetUnit} ({goal.projection?.status ?? "no series"})</li>
-          ))}
-        </ul>
       </Panel>
     </div>
   );

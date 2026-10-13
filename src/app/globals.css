@@ -4,20 +4,65 @@
 
 :root {
   color-scheme: dark;
+  --chart-grid: #2c382c;
+  --chart-axis: #a3ad9c;
+  --chart-tip: #1c2419;
 }
 
 body {
   margin: 0;
-  background: #0c0f14;
-  color: #f4f7fb;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: #121611;
+  color: #f4f1e8;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.5;
 }
 
 :focus-visible {
-  outline: 2px solid #7dd3c7;
+  outline: 2px solid #d6e36a;
   outline-offset: 2px;
 }
 
 input, select, textarea, button {
   font: inherit;
+}
+
+@layer components {
+  .field {
+    @apply mt-1 w-full rounded-md border border-line bg-ink px-3 py-2 text-sm text-text;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-ink shadow-card transition hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-md border border-line bg-transparent px-3 py-1.5 text-sm text-text transition hover:bg-raised active:translate-y-px;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full border border-line px-2 py-0.5 text-xs uppercase tracking-wide text-muted;
+  }
+
+  .badge-measured {
+    @apply border-measured/40 text-measured;
+  }
+
+  .badge-estimate {
+    @apply border-estimate/50 text-estimate;
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-display), var(--font-sans), sans-serif;
+    letter-spacing: 0.01em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

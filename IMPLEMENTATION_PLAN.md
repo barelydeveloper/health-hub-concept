@@ -13,7 +13,7 @@ The product is a Next.js monolith beside the two legacy static apps.
 
 Assumptions that were not worth blocking on:
 
-- Local Postgres is Docker Compose on port 54329, database `fitness_intelligence`.
+- Local Postgres is Docker Compose on port 54330, database `fitness_intelligence`.
 - One seeded user is enough. Tokens and `userId` foreign keys are already user-scoped.
 - Canonical units are pounds, inches, kilocalories, grams, and seconds.
 - Shoulder press and eccentric calf-raise dates were not specified, so those fixture sets share the 2026-10-09 pull-up session and the session note says so.

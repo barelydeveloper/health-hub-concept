@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel } from "@/components/Shell";
+import { Button, Empty, Loading, Notice, PageHeader } from "@/components/ui";
 import { api, idempotencyKey } from "@/lib/api";
 
 interface Me { data: { email: string; profile: { heightInches: number | null; timezone: string; notes: string | null } | null } }
@@ -46,27 +47,29 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Settings</h1>
+    <div className="space-y-5">
+      <PageHeader title="Settings" lede="The app works with no AI service connected. A bearer token is only for an external client you choose." />
       <Panel title="Profile">
-        {me.error ? <p role="alert">{me.error.message}</p> : me.data ? <p className="text-sm">{me.data.data.email}. Height {me.data.data.profile?.heightInches ?? "—"} in. Timezone {me.data.data.profile?.timezone ?? "—"}. {me.data.data.profile?.notes}</p> : <p>Loading…</p>}
+        {me.error ? <p role="alert" className="text-sm text-danger">{me.error.message}</p> : me.data ? <p className="text-sm">{me.data.data.email}. Height <span className="num">{me.data.data.profile?.heightInches ?? "—"}</span> in. Timezone {me.data.data.profile?.timezone ?? "—"}. {me.data.data.profile?.notes}</p> : <Loading label="Loading profile…" />}
       </Panel>
       <Panel title="API access">
-        <form onSubmit={createToken} className="space-y-2 text-sm">
-          <label className="block">Name<input name="name" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="mr-3"><input type="checkbox" name="read" defaultChecked /> read</label>
-          <label className="mr-3"><input type="checkbox" name="write" /> write</label>
-          <label><input type="checkbox" name="import" /> import</label>
-          <button className="mt-2 block rounded bg-accent px-4 py-2 font-semibold text-ink">Create token</button>
+        <form onSubmit={createToken} className="space-y-3 text-sm">
+          <label className="block">Name<input name="name" required className="field" /></label>
+          <div className="flex flex-wrap gap-4">
+            <label className="inline-flex items-center gap-2"><input type="checkbox" name="read" defaultChecked className="h-4 w-4 accent-accent" /> read</label>
+            <label className="inline-flex items-center gap-2"><input type="checkbox" name="write" className="h-4 w-4 accent-accent" /> write</label>
+            <label className="inline-flex items-center gap-2"><input type="checkbox" name="import" className="h-4 w-4 accent-accent" /> import</label>
+          </div>
+          <Button>Create token</Button>
         </form>
-        {created ? <p className="mt-3 break-all text-sm">Copy this token now. It is not shown again: {created}</p> : null}
-        {actionError ? <p role="alert" className="mt-3 text-sm">{actionError}</p> : null}
-        {tokens.error ? <p role="alert" className="mt-3 text-sm">{tokens.error.message}</p> : tokens.isLoading || !tokens.data ? <p className="mt-3 text-sm">Loading…</p> : (
+        {created ? <p className="mt-3 break-all rounded-md border border-estimate/40 bg-ink px-3 py-2 text-sm">Copy this token now. It is not shown again: <span className="num">{created}</span></p> : null}
+        {actionError ? <Notice tone="danger">{actionError}</Notice> : null}
+        {tokens.error ? <p role="alert" className="mt-3 text-sm text-danger">{tokens.error.message}</p> : tokens.isLoading || !tokens.data ? <Loading label="Loading tokens…" /> : (
           <ul className="mt-3 space-y-2 text-sm">
-            {tokens.data.data.length === 0 ? <li className="text-muted">No tokens yet.</li> : tokens.data.data.map((token) => (
-              <li key={token.id} className="flex items-center justify-between gap-3">
-                <span>{token.name} ({token.scopes.join(", ")}) {token.revokedAt ? "revoked" : "active"}</span>
-                {token.revokedAt ? null : <button type="button" className="rounded border border-line px-2 py-1" onClick={() => revoke(token.id)}>Revoke</button>}
+            {tokens.data.data.length === 0 ? <li><Empty>No tokens yet.</Empty></li> : tokens.data.data.map((token) => (
+              <li key={token.id} className="flex items-center justify-between gap-3 border-t border-line py-2">
+                <span>{token.name} <span className="text-muted">({token.scopes.join(", ")})</span> <span className="badge">{token.revokedAt ? "revoked" : "active"}</span></span>
+                {token.revokedAt ? null : <button type="button" className="btn-ghost" onClick={() => revoke(token.id)}>Revoke</button>}
               </li>
             ))}
           </ul>
@@ -79,12 +82,12 @@ export default function SettingsPage() {
           <li>Record a weigh-in of 151.4 lb this morning.</li>
           <li>What is my pull-up history compared with the previous session?</li>
         </ul>
-        <p className="mt-2 text-sm text-muted">Point a GPT Action at the deployed HTTPS OpenAPI file and send the bearer token. The app works with no AI service connected.</p>
+        <p className="mt-2 text-sm text-muted">Point a GPT Action at the deployed HTTPS OpenAPI file and send the bearer token.</p>
       </Panel>
       <Panel title="Audit">
-        {audit.error ? <p role="alert">{audit.error.message}</p> : audit.isLoading || !audit.data ? <p className="text-sm">Loading…</p> : audit.data.data.length === 0 ? <p className="text-sm text-muted">No audit events yet.</p> : (
+        {audit.error ? <p role="alert" className="text-sm text-danger">{audit.error.message}</p> : audit.isLoading || !audit.data ? <Loading label="Loading audit…" /> : audit.data.data.length === 0 ? <Empty>No audit events yet.</Empty> : (
           <ul className="space-y-1 text-sm">
-            {audit.data.data.slice(0, 12).map((row) => <li key={row.id}>{row.createdAt.slice(0, 16).replace("T", " ")} {row.action} {row.entityType}</li>)}
+            {audit.data.data.slice(0, 12).map((row) => <li key={row.id} className="border-t border-line py-2 first:border-t-0"><span className="num text-muted">{row.createdAt.slice(0, 16).replace("T", " ")}</span> {row.action} {row.entityType}</li>)}
           </ul>
         )}
       </Panel>

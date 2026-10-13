@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel } from "@/components/Shell";
 import { TrendChart } from "@/components/TrendChart";
+import { Button, Empty, Loading, Notice, PageHeader } from "@/components/ui";
 import { api, formatNumber, idempotencyKey } from "@/lib/api";
 
 interface Trends {
@@ -64,8 +65,8 @@ export default function BodyPage() {
     }
   }
 
-  if (trends.error || measurements.error) return <p role="alert">{(trends.error ?? measurements.error)?.message}</p>;
-  if (trends.isLoading || measurements.isLoading || !trends.data || !measurements.data) return <p>Loading body composition…</p>;
+  if (trends.error || measurements.error) return <p role="alert" className="text-sm text-danger">{(trends.error ?? measurements.error)?.message}</p>;
+  if (trends.isLoading || measurements.isLoading || !trends.data || !measurements.data) return <Loading label="Loading body composition…" />;
   const analysis = trends.data.data.analysis;
   const labeled = [...analysis.points].reverse().find((point) => point.rawBodyFatPercent != null && point.hydrationContext?.bodyFatPercent != null);
   const chart = analysis.points.map((point) => ({
@@ -85,37 +86,36 @@ export default function BodyPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Body composition</h1>
-      <p className="text-sm text-muted">{analysis.normalization.status === "ok" ? `Water baseline ${formatNumber(analysis.baselineBodyWaterLb)} lb.` : analysis.normalization.reason}</p>
-      <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
-        {analysis.limitations.map((item) => <li key={item}>{item}</li>)}
+    <div className="space-y-5">
+      <PageHeader title="Body composition" lede={analysis.normalization.status === "ok" ? `Water baseline ${formatNumber(analysis.baselineBodyWaterLb)} lb. Normalized body fat is an estimate and is drawn dashed.` : analysis.normalization.reason} />
+      <ul className="space-y-1 text-sm text-muted">
+        {analysis.limitations.map((item) => <li key={item} className="border-l-2 border-estimate pl-3">{item}</li>)}
       </ul>
-      <Panel title="Weight">
-        <TrendChart data={chart} lines={[{ key: "weight", name: "Weight (lb)", color: "#7dd3c7" }]} />
+      <Panel title="Weight" note="Measured">
+        <TrendChart data={chart} lines={[{ key: "weight", name: "Weight (lb)", color: "#6fbf9a" }]} />
       </Panel>
-      <Panel title="Body fat, raw and normalized">
-        {labeled ? <p className="mb-2 text-sm">Latest paired reading {labeled.recordedAt.slice(0, 10)}: raw {formatNumber(labeled.rawBodyFatPercent)}%, normalized {formatNumber(labeled.hydrationContext?.bodyFatPercent)}% (estimate).</p> : null}
-        <TrendChart data={chart} lines={[{ key: "rawFat", name: "Raw %", color: "#f0b429" }, { key: "normalizedFat", name: "Normalized %", color: "#7dd3c7" }]} />
+      <Panel title="Body fat, raw and normalized" note="Solid is measured. Dashed is the hydration estimate.">
+        {labeled ? <p className="mb-2 text-sm">Latest paired reading {labeled.recordedAt.slice(0, 10)}: raw {formatNumber(labeled.rawBodyFatPercent)}%, normalized {formatNumber(labeled.hydrationContext?.bodyFatPercent)}% (estimate).</p> : <p className="mb-2 text-sm text-muted">No paired reading has both a raw percentage and a normalized estimate.</p>}
+        <TrendChart data={chart} lines={[{ key: "rawFat", name: "Raw %", color: "#d6e36a" }, { key: "normalizedFat", name: "Normalized %", color: "#e0a15c", dashed: true }]} />
       </Panel>
-      <Panel title="Fat mass and fat-free mass">
-        <TrendChart data={chart} lines={[{ key: "fatMass", name: "Fat mass", color: "#f0b429" }, { key: "fatFree", name: "Fat-free mass", color: "#8eb6ff" }]} />
+      <Panel title="Fat mass and fat-free mass" note="Fat-free mass is not muscle">
+        <TrendChart data={chart} lines={[{ key: "fatMass", name: "Fat mass", color: "#e0a15c" }, { key: "fatFree", name: "Fat-free mass", color: "#6fbf9a" }]} />
       </Panel>
       <Panel title="Body water">
-        <TrendChart data={chart} lines={[{ key: "water", name: "Body water (lb)", color: "#8eb6ff" }]} />
+        <TrendChart data={chart} lines={[{ key: "water", name: "Body water (lb)", color: "#8eb4d4" }]} />
       </Panel>
       <Panel title="Tape">
-        {[...tapeBySite.entries()].length === 0 ? <p className="text-sm text-muted">No tape measurements.</p> : [...tapeBySite.entries()].map(([site, rows]) => (
+        {[...tapeBySite.entries()].length === 0 ? <Empty>No tape measurements.</Empty> : [...tapeBySite.entries()].map(([site, rows]) => (
           <p key={site} className="text-sm">{site.replaceAll("_", " ")}: {rows.map((row) => `${row.date} ${formatNumber(row.value)} in`).join(", ")}</p>
         ))}
       </Panel>
       <Panel title="Readings">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead><tr className="text-muted"><th>Date</th><th>Kind</th><th>Value</th><th>Origin</th></tr></thead>
+          <table className="w-full min-w-[32rem] text-left text-sm">
+            <thead><tr className="text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Kind</th><th className="py-2 pr-3">Value</th><th className="py-2">Origin</th></tr></thead>
             <tbody>
               {measurements.data.data.map((row) => (
-                <tr key={row.id} className="border-t border-line"><td>{row.recordedAt.slice(0, 10)}</td><td>{row.kind}</td><td>{formatNumber(row.value)}</td><td>{row.valueOrigin}</td></tr>
+                <tr key={row.id} className="border-t border-line"><td className="py-2 pr-3">{row.recordedAt.slice(0, 10)}</td><td className="py-2 pr-3">{row.kind.replaceAll("_", " ")}</td><td className="num py-2 pr-3">{formatNumber(row.value)}</td><td className="py-2"><span className="badge">{row.valueOrigin}</span></td></tr>
               ))}
             </tbody>
           </table>
@@ -123,13 +123,13 @@ export default function BodyPage() {
       </Panel>
       <Panel title="Add a reading">
         <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3">
-          <label className="text-sm">Date<input name="date" type="date" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Weight (lb)<input name="weightLb" type="number" step="0.1" min="1" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Body fat %<input name="bodyFatPercent" type="number" step="0.1" min="0" max="100" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <button className="rounded bg-accent px-4 py-2 font-semibold text-ink sm:col-span-3">Save</button>
+          <label className="text-sm">Date<input name="date" type="date" required className="field" /></label>
+          <label className="text-sm">Weight (lb)<input name="weightLb" type="number" step="0.1" min="1" required className="field" /></label>
+          <label className="text-sm">Body fat %<input name="bodyFatPercent" type="number" step="0.1" min="0" max="100" className="field" /></label>
+          <Button className="sm:col-span-3 sm:w-fit">Save</Button>
         </form>
-        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
-        {message ? <p className="mt-2 text-sm">{message}</p> : null}
+        {formError ? <Notice tone="danger">{formError}</Notice> : null}
+        {message ? <Notice tone="ok">{message}</Notice> : null}
       </Panel>
     </div>
   );

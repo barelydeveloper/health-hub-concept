@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel } from "@/components/Shell";
+import { Button, Delta, Empty, Loading, Notice, PageHeader } from "@/components/ui";
 import { api, formatNumber, idempotencyKey } from "@/lib/api";
 
 interface WorkoutList {
@@ -68,20 +69,21 @@ export default function WorkoutsPage() {
     }
   }
 
-  if (workouts.error) return <p role="alert">{workouts.error.message}</p>;
-  if (workouts.isLoading || !workouts.data) return <p>Loading workouts…</p>;
+  if (workouts.error) return <p role="alert" className="text-sm text-danger">{workouts.error.message}</p>;
+  if (workouts.isLoading || !workouts.data) return <Loading label="Loading workouts…" />;
+  const comparison = history.data?.data.comparison;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Workouts</h1>
+    <div className="space-y-5">
+      <PageHeader title="Workouts" lede="Compare the latest session with the one before it. Isometric holds and eccentric loads stay on their own records." />
       <Panel title="Log a session">
         <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm">Date<input name="date" type="date" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Session name<input name="name" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Exercise slug<input name="slug" defaultValue="pull-up" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Exercise name<input name="exerciseName" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
+          <label className="text-sm">Date<input name="date" type="date" required className="field" /></label>
+          <label className="text-sm">Session name<input name="name" className="field" /></label>
+          <label className="text-sm">Exercise slug<input name="slug" defaultValue="pull-up" required className="field" /></label>
+          <label className="text-sm">Exercise name<input name="exerciseName" className="field" /></label>
           <label className="text-sm">Modality
-            <select name="modality" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2">
+            <select name="modality" className="field">
               <option value="conventional">Conventional</option>
               <option value="bodyweight">Bodyweight</option>
               <option value="weighted_bodyweight">Weighted bodyweight</option>
@@ -90,23 +92,23 @@ export default function WorkoutsPage() {
               <option value="isometric">Isometric</option>
             </select>
           </label>
-          <label className="text-sm">Reps<input name="reps" type="number" min="0" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Load or assistance (lb)<input name="load" type="number" min="0" step="0.5" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Duration (sec)<input name="duration" type="number" min="0" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Body weight (lb)<input name="bodyWeight" type="number" min="0" step="0.1" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <button className="rounded bg-accent px-4 py-2 font-semibold text-ink">Save session</button>
+          <label className="text-sm">Reps<input name="reps" type="number" min="0" className="field" /></label>
+          <label className="text-sm">Load or assistance (lb)<input name="load" type="number" min="0" step="0.5" className="field" /></label>
+          <label className="text-sm">Duration (sec)<input name="duration" type="number" min="0" className="field" /></label>
+          <label className="text-sm">Body weight (lb)<input name="bodyWeight" type="number" min="0" step="0.1" className="field" /></label>
+          <Button>Save session</Button>
         </form>
-        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
-        {message ? <p className="mt-2 text-sm">{message}</p> : null}
+        {formError ? <Notice tone="danger">{formError}</Notice> : null}
+        {message ? <Notice tone="ok">{message}</Notice> : null}
       </Panel>
       <Panel title="Timeline">
-        {workouts.data.data.length === 0 ? <p className="text-sm text-muted">No sessions yet.</p> : workouts.data.data.map((session) => (
+        {workouts.data.data.length === 0 ? <Empty>No sessions yet.</Empty> : workouts.data.data.map((session) => (
           <article key={session.id} className="border-t border-line py-3 first:border-t-0">
-            <h3 className="font-medium">{session.startedAt.slice(0, 10)}</h3>
-            <ul className="mt-1 text-sm text-muted">
+            <h3 className="font-display text-lg font-semibold">{session.startedAt.slice(0, 10)}</h3>
+            <ul className="mt-1 space-y-1 text-sm text-muted">
               {session.summary.exercises.map((exercise) => (
                 <li key={exercise.exerciseId}>
-                  <button type="button" className="underline" onClick={() => setSlug(exercise.exerciseId)}>{exercise.exerciseName}</button>
+                  <button type="button" className="underline decoration-line underline-offset-2 hover:text-text" onClick={() => setSlug(exercise.exerciseId)}>{exercise.exerciseName}</button>
                   {" "}— {exercise.totalReps} reps, best {exercise.bestReps ?? "—"}, volume {formatNumber(exercise.conventionalVolumeLb, 0)} lb
                 </li>
               ))}
@@ -114,14 +116,19 @@ export default function WorkoutsPage() {
           </article>
         ))}
       </Panel>
-      <Panel title={`History: ${slug}`}>
-        {history.error ? <p role="alert">{history.error.message}</p> : history.isLoading || !history.data ? <p>Loading history…</p> : (
-          <div className="space-y-2 text-sm">
-            <p>Latest total reps {history.data.data.comparison.latest?.totalReps ?? "—"} (best {history.data.data.comparison.latest?.bestReps ?? "—"}), previous {history.data.data.comparison.previous?.totalReps ?? "—"}, change {history.data.data.comparison.deltaTotalReps ?? "—"} reps.</p>
+      <Panel title={`History: ${slug}`} note="Select an exercise in the timeline">
+        {history.error ? <p role="alert" className="text-sm text-danger">{history.error.message}</p> : history.isLoading || !history.data ? <Loading label="Loading history…" /> : (
+          <div className="space-y-3 text-sm">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-md bg-ink px-3 py-2"><p className="text-xs uppercase tracking-wide text-muted">Previous total</p><p className="num text-2xl">{comparison?.previous?.totalReps ?? "—"}</p></div>
+              <div className="rounded-md bg-ink px-3 py-2"><p className="text-xs uppercase tracking-wide text-muted">Change</p><Delta value={comparison?.deltaTotalReps ?? null} unit="reps" /></div>
+              <div className="rounded-md bg-ink px-3 py-2"><p className="text-xs uppercase tracking-wide text-muted">Latest total</p><p className="num text-2xl">{comparison?.latest?.totalReps ?? "—"}</p></div>
+            </div>
+            <p>Latest total reps {comparison?.latest?.totalReps ?? "—"} (best {comparison?.latest?.bestReps ?? "—"}), previous {comparison?.previous?.totalReps ?? "—"}, change {comparison?.deltaTotalReps ?? "—"} reps.</p>
             <p>Records: e1RM {formatNumber(history.data.data.records.bestE1rmLb)} lb, reps {history.data.data.records.bestReps ?? "—"}, hold {formatNumber(history.data.data.records.bestDurationSec, 0)} s, eccentric load {formatNumber(history.data.data.records.bestEccentricLoadLb, 0)} lb.</p>
             <p>{history.data.data.overload.message}</p>
             <p className="text-muted">{history.data.data.muscleExposure.heuristic ? "Muscle exposure is a configurable heuristic." : ""}</p>
-            <ul>{history.data.data.muscleExposure.muscles.map((muscle) => <li key={muscle.muscle}>{muscle.muscle}: direct {muscle.direct}, secondary {muscle.secondary}</li>)}</ul>
+            <ul className="grid gap-1 sm:grid-cols-2">{history.data.data.muscleExposure.muscles.map((muscle) => <li key={muscle.muscle}>{muscle.muscle}: direct {muscle.direct.toLocaleString(undefined, { maximumFractionDigits: 1 })}, secondary {muscle.secondary.toLocaleString(undefined, { maximumFractionDigits: 1 })}</li>)}</ul>
           </div>
         )}
       </Panel>

@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel } from "@/components/Shell";
+import { Button, Empty, Loading, Notice, PageHeader } from "@/components/ui";
 import { api, formatNumber, idempotencyKey } from "@/lib/api";
 
 interface Goals {
@@ -45,32 +46,33 @@ export default function GoalsPage() {
     }
   }
 
-  if (goals.error || forecasts.error) return <p role="alert">{(goals.error ?? forecasts.error)?.message}</p>;
-  if (goals.isLoading || forecasts.isLoading || !goals.data || !forecasts.data) return <p>Loading goals…</p>;
+  if (goals.error || forecasts.error) return <p role="alert" className="text-sm text-danger">{(goals.error ?? forecasts.error)?.message}</p>;
+  if (goals.isLoading || forecasts.isLoading || !goals.data || !forecasts.data) return <Loading label="Loading goals…" />;
   const live = forecasts.data.data.live;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Goals and forecasts</h1>
-      <p className="text-sm text-muted">{live.disclaimer}</p>
-      <Panel title="Weight trajectory">
-        <p className="text-sm">Linear status {live.linear.status}. Slope {formatNumber(live.linear.slopePerWeek)} lb/week. 56-day projection {formatNumber(live.linear.projected)} lb.</p>
+    <div className="space-y-5">
+      <PageHeader title="Goals and forecasts" lede={live.disclaimer} />
+      <Panel title="Weight trajectory" note="Estimate, not a guarantee">
+        <p className="text-sm">Linear status <span className="badge">{live.linear.status}</span>. Slope <span className="num">{formatNumber(live.linear.slopePerWeek)}</span> lb/week. 56-day projection <span className="num">{formatNumber(live.linear.projected)}</span> lb.</p>
         <p className="mt-2 text-sm">Plateau: {live.plateau.plateau ? "yes" : "no"}. {live.plateau.reason}</p>
       </Panel>
       <Panel title="Active goals">
-        <ul className="space-y-2 text-sm">
-          {goals.data.data.map((goal) => (
-            <li key={goal.id}>
-              <span className="font-medium">{goal.name}</span> — {formatNumber(goal.projection?.latest ?? null)} toward {formatNumber(goal.targetValue)} {goal.targetUnit}. {goal.projection?.status ?? "no series"}{goal.projection?.estimatedDate ? `, estimate ${goal.projection.estimatedDate.slice(0, 10)}` : ""}.
-            </li>
-          ))}
-        </ul>
+        {goals.data.data.length === 0 ? <Empty>No goals yet.</Empty> : (
+          <ul className="space-y-2 text-sm">
+            {goals.data.data.map((goal) => (
+              <li key={goal.id} className="border-t border-line pt-2 first:border-t-0 first:pt-0">
+                <span className="font-medium">{goal.name}</span> — <span className="num">{formatNumber(goal.projection?.latest ?? null)}</span> toward <span className="num">{formatNumber(goal.targetValue)}</span> {goal.targetUnit}. <span className="badge">{goal.projection?.status ?? "no series"}</span>{goal.projection?.estimatedDate ? `, estimate ${goal.projection.estimatedDate.slice(0, 10)}` : ""}.
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
       <Panel title="Add a goal">
         <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm">Name<input name="name" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
+          <label className="text-sm">Name<input name="name" required className="field" /></label>
           <label className="text-sm">Type
-            <select name="type" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2">
+            <select name="type" className="field">
               <option value="weight">Weight</option>
               <option value="body_fat_percent">Body fat %</option>
               <option value="fat_mass">Fat mass</option>
@@ -83,15 +85,15 @@ export default function GoalsPage() {
               <option value="protein">Protein</option>
             </select>
           </label>
-          <label className="text-sm">Target<input name="target" type="number" step="0.1" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Unit<input name="unit" defaultValue="lb" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
+          <label className="text-sm">Target<input name="target" type="number" step="0.1" required className="field" /></label>
+          <label className="text-sm">Unit<input name="unit" defaultValue="lb" required className="field" /></label>
           <label className="text-sm">Direction
-            <select name="direction" className="mt-1 w-full rounded border border-line bg-ink px-3 py-2"><option value="up">Up</option><option value="down">Down</option></select>
+            <select name="direction" className="field"><option value="up">Up</option><option value="down">Down</option></select>
           </label>
-          <button className="rounded bg-accent px-4 py-2 font-semibold text-ink">Save goal</button>
+          <Button>Save goal</Button>
         </form>
-        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
-        {message ? <p className="mt-2 text-sm">{message}</p> : null}
+        {formError ? <Notice tone="danger">{formError}</Notice> : null}
+        {message ? <Notice tone="ok">{message}</Notice> : null}
       </Panel>
     </div>
   );

@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: fitness
       POSTGRES_DB: fitness_intelligence
     ports:
-      - "54329:5432"
+      - "54330:5432"
     volumes:
       - fitness_pg:/var/lib/postgresql/data
     healthcheck:

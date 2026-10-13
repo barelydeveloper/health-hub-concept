@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel } from "@/components/Shell";
+import { Button, Empty, Loading, Notice, PageHeader } from "@/components/ui";
 import { api, idempotencyKey } from "@/lib/api";
 
 interface Imports {
@@ -44,22 +45,23 @@ export default function ImportsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Imports</h1>
+    <div className="space-y-5">
+      <PageHeader title="Imports" lede="Unknown files are reported and not parsed. A repeated export skips unchanged rows and will not overwrite a corrected record." />
       <Panel title="Samsung Health ZIP or CSV">
         <form onSubmit={onSubmit} className="space-y-3">
-          <input name="files" type="file" multiple accept=".csv,.zip,text/csv,application/zip" className="block w-full text-sm" />
-          <button className="rounded bg-accent px-4 py-2 font-semibold text-ink" disabled={pending}>{pending ? "Importing…" : "Import"}</button>
+          <label className="block text-sm">Files
+            <input name="files" type="file" multiple accept=".csv,.zip,text/csv,application/zip" className="field file:mr-3 file:rounded file:border-0 file:bg-raised file:px-2 file:py-1 file:text-text" />
+          </label>
+          <Button disabled={pending}>{pending ? "Importing…" : "Import"}</Button>
         </form>
-        {message ? <p className="mt-3 text-sm">{message}</p> : null}
-        <p className="mt-3 text-sm text-muted">Unknown files are reported and not parsed. A repeated export skips unchanged rows and will not overwrite a corrected record.</p>
+        {message ? <Notice>{message}</Notice> : null}
       </Panel>
       <Panel title="Recent batches">
-        {query.error ? <p role="alert">{query.error.message}</p> : query.isLoading || !query.data ? <p>Loading…</p> : query.data.data.length === 0 ? <p className="text-sm text-muted">No imports yet.</p> : query.data.data.map((batch) => (
-          <article key={batch.id} className="border-t border-line py-3 text-sm">
-            <p>{batch.startedAt.slice(0, 16).replace("T", " ")} — {batch.status}</p>
+        {query.error ? <p role="alert" className="text-sm text-danger">{query.error.message}</p> : query.isLoading || !query.data ? <Loading label="Loading imports…" /> : query.data.data.length === 0 ? <Empty>No imports yet.</Empty> : query.data.data.map((batch) => (
+          <article key={batch.id} className="border-t border-line py-3 text-sm first:border-t-0">
+            <p><span className="num">{batch.startedAt.slice(0, 16).replace("T", " ")}</span> — <span className="badge">{batch.status}</span></p>
             {batch.summary == null ? <p>Summary unavailable ({batch.status}).</p> : <p>Added {batch.summary.added ?? 0}, skipped {batch.summary.skipped ?? 0}, revised {batch.summary.revised ?? 0}, kept {batch.summary.keptCorrections ?? 0}.</p>}
-            {(batch.errors ?? []).slice(0, 5).map((error) => <p key={`${error.file}${error.message}`} className="text-muted">{error.file}: {error.message}</p>)}
+            {(batch.errors ?? []).slice(0, 5).map((error) => <p key={`${error.file}${error.message}`} className="text-danger">{error.file}: {error.message}</p>)}
           </article>
         ))}
       </Panel>

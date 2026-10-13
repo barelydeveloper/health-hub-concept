@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel } from "@/components/Shell";
 import { TrendChart } from "@/components/TrendChart";
+import { Button, Empty, Loading, Notice, PageHeader } from "@/components/ui";
 import { api, formatNumber, idempotencyKey } from "@/lib/api";
 
 interface Nutrition {
@@ -43,36 +44,41 @@ export default function NutritionPage() {
     }
   }
 
-  if (query.error) return <p role="alert">{query.error.message}</p>;
-  if (query.isLoading || !query.data) return <p>Loading nutrition…</p>;
+  if (query.error) return <p role="alert" className="text-sm text-danger">{query.error.message}</p>;
+  if (query.isLoading || !query.data) return <Loading label="Loading nutrition…" />;
   const latest = query.data.data.daily[0];
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Nutrition</h1>
+    <div className="space-y-5">
+      <PageHeader title="Nutrition" lede="Daily totals are recomputed from the food entries you store." />
       <Panel title="Latest daily totals">
-        {latest ? <p className="text-sm">{latest.date}: {formatNumber(latest.calories, 0)} kcal, protein {formatNumber(latest.proteinG)} g, carbs {formatNumber(latest.carbG)} g, fat {formatNumber(latest.fatG)} g.</p> : <p className="text-sm text-muted">No daily summaries yet.</p>}
+        {latest ? <p className="text-sm"><span className="num">{latest.date}</span>: <span className="num">{formatNumber(latest.calories, 0)}</span> kcal, protein <span className="num">{formatNumber(latest.proteinG)}</span> g, carbs <span className="num">{formatNumber(latest.carbG)}</span> g, fat <span className="num">{formatNumber(latest.fatG)}</span> g.</p> : <Empty>No daily summaries yet.</Empty>}
       </Panel>
-      <Panel title="Calorie trend">
-        <TrendChart data={[...query.data.data.daily].reverse().map((day) => ({ date: day.date, calories: day.calories, protein: day.proteinG }))} lines={[{ key: "calories", name: "Calories", color: "#f0b429" }, { key: "protein", name: "Protein (g)", color: "#7dd3c7" }]} />
+      <Panel title="Calories and protein">
+        <div className="space-y-4">
+          <TrendChart zeroBaseline data={[...query.data.data.daily].reverse().map((day) => ({ date: day.date, calories: day.calories }))} lines={[{ key: "calories", name: "Calories", color: "#e0a15c" }]} />
+          <TrendChart zeroBaseline data={[...query.data.data.daily].reverse().map((day) => ({ date: day.date, protein: day.proteinG }))} lines={[{ key: "protein", name: "Protein (g)", color: "#6fbf9a" }]} />
+        </div>
       </Panel>
       <Panel title="Add food">
         <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm">Date<input name="date" type="date" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Name<input name="name" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Calories<input name="calories" type="number" min="0" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Protein (g)<input name="protein" type="number" min="0" step="0.1" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Carbs (g)<input name="carbs" type="number" min="0" step="0.1" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <label className="text-sm">Fat (g)<input name="fat" type="number" min="0" step="0.1" required className="mt-1 w-full rounded border border-line bg-ink px-3 py-2" /></label>
-          <button className="rounded bg-accent px-4 py-2 font-semibold text-ink">Save</button>
+          <label className="text-sm">Date<input name="date" type="date" required className="field" /></label>
+          <label className="text-sm">Name<input name="name" required className="field" /></label>
+          <label className="text-sm">Calories<input name="calories" type="number" min="0" required className="field" /></label>
+          <label className="text-sm">Protein (g)<input name="protein" type="number" min="0" step="0.1" required className="field" /></label>
+          <label className="text-sm">Carbs (g)<input name="carbs" type="number" min="0" step="0.1" required className="field" /></label>
+          <label className="text-sm">Fat (g)<input name="fat" type="number" min="0" step="0.1" required className="field" /></label>
+          <Button>Save</Button>
         </form>
-        {formError ? <p role="alert" className="mt-2 text-sm">{formError}</p> : null}
-        {message ? <p className="mt-2 text-sm">{message}</p> : null}
+        {formError ? <Notice tone="danger">{formError}</Notice> : null}
+        {message ? <Notice tone="ok">{message}</Notice> : null}
       </Panel>
       <Panel title="History">
-        <ul className="space-y-1 text-sm">
-          {query.data.data.entries.map((entry) => <li key={entry.id}>{entry.recordedAt.slice(0, 10)} {entry.name}: {formatNumber(entry.calories, 0)} kcal, {formatNumber(entry.proteinG)} g protein ({entry.valueOrigin})</li>)}
-        </ul>
+        {query.data.data.entries.length === 0 ? <Empty>No food entries yet.</Empty> : (
+          <ul className="space-y-1 text-sm">
+            {query.data.data.entries.map((entry) => <li key={entry.id} className="border-t border-line py-2 first:border-t-0">{entry.recordedAt.slice(0, 10)} {entry.name}: <span className="num">{formatNumber(entry.calories, 0)}</span> kcal, <span className="num">{formatNumber(entry.proteinG)}</span> g protein <span className="badge">{entry.valueOrigin}</span></li>)}
+          </ul>
+        )}
       </Panel>
     </div>
   );
