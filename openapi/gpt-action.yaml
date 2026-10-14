@@ -1,0 +1,972 @@
+openapi: 3.1.0
+info:
+  title: Fitness Intelligence GPT Action
+  version: 2.0.0
+  description: |
+    Personal fitness records. Writes require authentication and an Idempotency-Key.
+    Browser sessions use the httpOnly fi_session cookie. External clients send Authorization Bearer.
+    Hydration-adjusted values and forecasts are estimates, not guaranteed outcomes.
+servers:
+  - url: https://health-hub-concept.netlify.app
+    description: Production origin for the custom GPT action.
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/profile:
+    get:
+      operationId: getProfile
+      summary: Read the signed-in profile
+      responses:
+        "200":
+          description: Profile
+        "401":
+          description: Unauthorized
+    patch:
+      operationId: updateProfile
+      summary: Update profile fields
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                heightInches:
+                  type: number
+                sex:
+                  type: string
+                  enum:
+                    - female
+                    - male
+                    - unspecified
+                birthDate:
+                  type: string
+                maxHeartRate:
+                  type: integer
+                timezone:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        "200":
+          description: Updated
+  /api/v1/dashboard:
+    get:
+      operationId: getDashboard
+      summary: Dashboard summary computed from stored records
+      responses:
+        "200":
+          description: Summary
+  /api/v1/workouts:
+    get:
+      operationId: listWorkouts
+      summary: List workouts
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Workout page
+    post:
+      operationId: createWorkout
+      summary: Create a workout
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - startedAt
+                - exercises
+              properties:
+                startedAt:
+                  type: string
+                  format: date-time
+                name:
+                  type: string
+                exercises:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - exerciseSlug
+                      - sets
+                    properties:
+                      exerciseSlug:
+                        type: string
+                      sets:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - modality
+                          properties:
+                            modality:
+                              type: string
+                              enum:
+                                - conventional
+                                - eccentric_only
+                                - isometric
+                                - assisted
+                                - bodyweight
+                                - weighted_bodyweight
+                            reps:
+                              type: integer
+                            durationSec:
+                              type: number
+                            externalLoadLb:
+                              type: number
+                            addedLoadLb:
+                              type: number
+                            assistanceLb:
+                              type: number
+                            bodyWeightLb:
+                              type: number
+                            rpe:
+                              type: number
+                            rir:
+                              type: number
+                            isWarmup:
+                              type: boolean
+                            side:
+                              type: string
+                              enum:
+                                - left
+                                - right
+                                - both
+            examples:
+              pullups:
+                value:
+                  startedAt: 2026-10-09T15:00:00.000Z
+                  exercises:
+                    - exerciseSlug: pull-up
+                      sets:
+                        - modality: bodyweight
+                          reps: 2
+                          bodyWeightLb: 151
+                        - modality: bodyweight
+                          reps: 2
+                          bodyWeightLb: 151
+                        - modality: bodyweight
+                          reps: 1
+                          bodyWeightLb: 151
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Invalid body or missing idempotency key
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Idempotency key reused with a different body
+  /api/v1/workouts/{id}:
+    get:
+      operationId: getWorkout
+      summary: Read one workout
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workout
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateWorkout
+      summary: Update session notes or timing
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                startedAt:
+                  type: string
+                  format: date-time
+                endedAt:
+                  type: string
+                  format: date-time
+                name:
+                  type: string
+                notes:
+                  type: string
+                timezone:
+                  type: string
+      responses:
+        "200":
+          description: Updated
+  /api/v1/workouts/{id}/sets:
+    post:
+      operationId: addWorkoutSets
+      summary: Append sets
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - exerciseSlug
+                - sets
+              properties:
+                exerciseSlug:
+                  type: string
+                exerciseName:
+                  type: string
+                sets:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - modality
+                    properties:
+                      modality:
+                        type: string
+                        enum:
+                          - conventional
+                          - eccentric_only
+                          - isometric
+                          - assisted
+                          - bodyweight
+                          - weighted_bodyweight
+                      reps:
+                        type: integer
+                      durationSec:
+                        type: number
+                      externalLoadLb:
+                        type: number
+                      addedLoadLb:
+                        type: number
+                      assistanceLb:
+                        type: number
+                      bodyWeightLb:
+                        type: number
+                      rpe:
+                        type: number
+                      rir:
+                        type: number
+                      isWarmup:
+                        type: boolean
+                      side:
+                        type: string
+                        enum:
+                          - left
+                          - right
+                          - both
+      responses:
+        "201":
+          description: Workout with new sets
+  /api/v1/workouts/{id}/sets/{setId}:
+    patch:
+      operationId: correctWorkoutSet
+      summary: Correct a set by writing a new revision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: setId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - modality
+              properties:
+                modality:
+                  type: string
+                  enum:
+                    - conventional
+                    - eccentric_only
+                    - isometric
+                    - assisted
+                    - bodyweight
+                    - weighted_bodyweight
+                reps:
+                  type: integer
+                durationSec:
+                  type: number
+                externalLoadLb:
+                  type: number
+                addedLoadLb:
+                  type: number
+                assistanceLb:
+                  type: number
+                bodyWeightLb:
+                  type: number
+                rpe:
+                  type: number
+                rir:
+                  type: number
+                isWarmup:
+                  type: boolean
+                side:
+                  type: string
+                  enum:
+                    - left
+                    - right
+                    - both
+      responses:
+        "200":
+          description: Corrected
+    delete:
+      operationId: deleteWorkoutSet
+      summary: Soft-delete a set
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: setId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Removed
+  /api/v1/exercises/{id}/history:
+    get:
+      operationId: getExerciseHistory
+      summary: Exercise history, last-session comparison, and records
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Exercise slug
+      responses:
+        "200":
+          description: History. An unknown slug returns an empty series
+          not another user's data.: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/personal-records:
+    get:
+      operationId: getPersonalRecords
+      summary: Personal records and muscle-exposure heuristic
+      responses:
+        "200":
+          description: Records
+  /api/v1/measurements:
+    get:
+      operationId: listMeasurements
+      summary: Body metrics and tape measurements
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Measurements
+    post:
+      operationId: createMeasurement
+      summary: Record body composition or a tape measurement
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - recordedAt
+              properties:
+                recordedAt:
+                  type: string
+                  format: date-time
+                weightLb:
+                  type: number
+                bodyFatPercent:
+                  type: number
+                fatMassLb:
+                  type: number
+                fatFreeMassLb:
+                  type: number
+                skeletalMuscleLb:
+                  type: number
+                bodyWaterLb:
+                  type: number
+                site:
+                  type: string
+                  enum:
+                    - neck
+                    - chest
+                    - waist
+                    - hips
+                    - thigh_left
+                    - thigh_right
+                    - upper_arm_left
+                    - upper_arm_right
+                    - other
+                siteLabel:
+                  type: string
+                valueInches:
+                  type: number
+                note:
+                  type: string
+            examples:
+              weighIn:
+                value:
+                  recordedAt: 2026-10-13T11:00:00.000Z
+                  weightLb: 151.4
+                  bodyFatPercent: 18.9
+      responses:
+        "201":
+          description: Created
+  /api/v1/measurements/{id}:
+    patch:
+      operationId: correctMeasurement
+      summary: Correct a measurement. The previous row is kept and marked superseded.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - value
+              properties:
+                value:
+                  type: number
+      responses:
+        "200":
+          description: New revision
+    delete:
+      operationId: deleteMeasurement
+      summary: Soft-delete a measurement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+  /api/v1/body-composition/trends:
+    get:
+      operationId: getBodyCompositionTrends
+      summary: Raw series beside hydration-context estimates
+      description: normalization.status is insufficient_data when there is not enough stable body-water data.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Analysis
+  /api/v1/nutrition:
+    get:
+      operationId: listNutrition
+      summary: Food entries and recomputed daily summaries
+      responses:
+        "200":
+          description: Nutrition
+    post:
+      operationId: createNutrition
+      summary: Record food and macros
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - recordedAt
+                - name
+              properties:
+                recordedAt:
+                  type: string
+                  format: date-time
+                name:
+                  type: string
+                calories:
+                  type: number
+                proteinG:
+                  type: number
+                carbG:
+                  type: number
+                fatG:
+                  type: number
+                fiberG:
+                  type: number
+                sodiumMg:
+                  type: number
+                quantity:
+                  type: number
+                meal:
+                  type: string
+                note:
+                  type: string
+      responses:
+        "201":
+          description: Created
+  /api/v1/goals:
+    get:
+      operationId: listGoals
+      summary: Goals with linear progress estimates
+      responses:
+        "200":
+          description: Goals
+    post:
+      operationId: createGoal
+      summary: Create a goal
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+                - name
+                - targetValue
+                - targetUnit
+              properties:
+                type:
+                  type: string
+                  enum:
+                    - weight
+                    - body_fat_percent
+                    - fat_mass
+                    - circumference
+                    - pull_up_reps
+                    - hold_duration
+                    - dumbbell_press_weight
+                    - deadlift_weight
+                    - training_frequency
+                    - calories
+                    - protein
+                    - custom
+                name:
+                  type: string
+                targetValue:
+                  type: number
+                targetHigh:
+                  type: number
+                targetUnit:
+                  type: string
+                targetDate:
+                  type: string
+                  format: date-time
+                direction:
+                  type: string
+                  enum:
+                    - up
+                    - down
+                exerciseSlug:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        "201":
+          description: Created
+  /api/v1/forecasts:
+    get:
+      operationId: getForecasts
+      summary: Linear forecast, plateau check, and saved scenarios
+      parameters:
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum:
+              - conservative
+              - expected
+              - aggressive
+        - name: intakeKcal
+          in: query
+          schema:
+            type: number
+        - name: tdeeKcal
+          in: query
+          schema:
+            type: number
+        - name: horizonDays
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Estimates
+          not guaranteed outcomes: null
+    post:
+      operationId: saveForecast
+      summary: Save a capped forecast scenario
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - mode
+                - intakeKcal
+                - tdeeKcal
+                - horizonDays
+              properties:
+                name:
+                  type: string
+                mode:
+                  type: string
+                  enum:
+                    - conservative
+                    - expected
+                    - aggressive
+                intakeKcal:
+                  type: number
+                tdeeKcal:
+                  type: number
+                horizonDays:
+                  type: integer
+      responses:
+        "201":
+          description: Saved
+  /api/v1/imports:
+    get:
+      operationId: listImports
+      summary: Import batches
+      responses:
+        "200":
+          description: Batches
+    post:
+      operationId: createImport
+      summary: Import Samsung Health CSV JSON or a ZIP of 4 MB or less
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - files
+              properties:
+                label:
+                  type: string
+                files:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - name
+                    properties:
+                      name:
+                        type: string
+                      text:
+                        type: string
+                      base64:
+                        type: string
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Added, skipped, revised, and error counts
+  /api/v1/imports/uploads:
+    post:
+      operationId: createImportUpload
+      summary: Start a direct ZIP upload up to 256 MB
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filename
+                - byteSize
+              properties:
+                filename:
+                  type: string
+                byteSize:
+                  type: integer
+      responses:
+        "201":
+          description: Owned batch and a short-lived signed PUT URL
+  /api/v1/imports/uploads/{id}/complete:
+    post:
+      operationId: completeImportUpload
+      summary: Queue a finished direct upload
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Batch queued
+  /api/v1/imports/{id}:
+    get:
+      operationId: getImport
+      summary: Import batch status, progress, and final counts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Batch status
+  /api/v1/recovery:
+    get:
+      operationId: getRecovery
+      summary: Sleep and activity logs
+      responses:
+        "200":
+          description: Logs
+components:
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+    NotFound:
+      description: Not found for this user
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    From:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date-time
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+  schemas:
+    Set:
+      type: object
+      required:
+        - modality
+      properties:
+        modality:
+          type: string
+          enum:
+            - conventional
+            - eccentric_only
+            - isometric
+            - assisted
+            - bodyweight
+            - weighted_bodyweight
+        reps:
+          type: integer
+        durationSec:
+          type: number
+        externalLoadLb:
+          type: number
+        addedLoadLb:
+          type: number
+        assistanceLb:
+          type: number
+        bodyWeightLb:
+          type: number
+        rpe:
+          type: number
+        rir:
+          type: number
+        isWarmup:
+          type: boolean
+        side:
+          type: string
+          enum:
+            - left
+            - right
+            - both

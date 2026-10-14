@@ -150,6 +150,11 @@ export const tokenSchema = z.object({
   expiresAt: z.string().datetime().nullable().optional(),
 });
 
+export const importUploadSchema = z.object({
+  filename: z.string().trim().min(1).max(200).regex(/\.zip$/i, "filename must end with .zip"),
+  byteSize: z.number().int().min(1).max(256 * 1024 * 1024),
+});
+
 export const importJsonSchema = z.object({
   label: z.string().max(200).optional(),
   files: z.array(z.object({

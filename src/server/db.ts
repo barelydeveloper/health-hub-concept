@@ -1,11 +1,19 @@
+import { PrismaNeon } from "@prisma/adapter-neon";
 import { PrismaClient } from "@prisma/client";
-import { loadLocalEnv } from "./env";
+import { neonConfig } from "@neondatabase/serverless";
+import ws from "ws";
+import { neonEnv } from "./neon-env";
 
-loadLocalEnv();
+neonConfig.webSocketConstructor = ws;
 
 const globalForPrisma = globalThis as { prisma?: PrismaClient };
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+function createPrisma(): PrismaClient {
+  const adapter = new PrismaNeon({ connectionString: neonEnv().postgres.databaseUrl });
+  return new PrismaClient({ adapter });
+}
+
+export const prisma = globalForPrisma.prisma ?? createPrisma();
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 

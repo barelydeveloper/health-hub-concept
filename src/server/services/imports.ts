@@ -12,6 +12,7 @@ import type { SamsungDay, SamsungImportDraft, SamsungWorkout } from "@/domain/im
 import type { AuthContext } from "../auth";
 import { dec, prisma } from "../db";
 import { contentHash } from "../idempotency";
+import { importObjectKey, putAsset } from "../storage";
 import { ensureExercise } from "./workouts";
 
 const TYPE_LABELS: Record<number, string> = { 0: "Other", 1001: "Walking", 1002: "Running", 15004: "Resistance" };
@@ -270,13 +271,54 @@ async function applyWorkout(userId: string, workout: SamsungWorkout, counts: Rec
   counts[existing ? "revised" : "added"] += 1;
 }
 
-export async function persistSamsungImport(ctx: AuthContext, draft: SamsungImportDraft, label?: string) {
-  const batch = await prisma.importBatch.create({
+export async function persistSamsungImport(
+  ctx: AuthContext,
+  draft: SamsungImportDraft,
+  label?: string,
+  stored?: {
+    files?: { name: string; body: Uint8Array; contentType: string }[];
+    archive?: Uint8Array;
+    batchId?: string;
+    archiveKey?: string;
+  },
+) {
+  const existing = stored?.batchId
+    ? await prisma.importBatch.findFirst({ where: { id: stored.batchId, userId: ctx.userId } })
+    : null;
+  if (stored?.batchId && !existing) throw new Error("Import batch was not found.");
+  const batch = existing ?? await prisma.importBatch.create({
     data: { userId: ctx.userId, sourceSystem: "samsung_health", status: "running", label: label ?? "Samsung Health import" },
   });
+  if (existing) {
+    await prisma.importFile.deleteMany({ where: { batchId: batch.id } });
+    await prisma.importRowError.deleteMany({ where: { batchId: batch.id } });
+  }
   const counts = { added: 0, skipped: 0, revised: 0, kept: 0 };
-  for (const file of draft.discovered) {
-    await prisma.importFile.create({ data: { batchId: batch.id, name: file.name, supported: file.supported, dataset: file.dataset } });
+  const originals = new Map(stored?.files?.map((file) => [file.name, file]));
+  let archiveKey = stored?.archiveKey ?? existing?.objectKey ?? undefined;
+  try {
+    if (stored?.archive) {
+      archiveKey = importObjectKey(ctx.userId, batch.id, "archive.zip");
+      await putAsset(archiveKey, stored.archive, "application/zip");
+    }
+    for (const file of draft.discovered) {
+      const original = originals.get(file.name);
+      const objectKey = original ? importObjectKey(ctx.userId, batch.id, file.name) : archiveKey;
+      if (original && objectKey) await putAsset(objectKey, original.body, original.contentType);
+      await prisma.importFile.create({
+        data: {
+          batchId: batch.id,
+          name: file.name,
+          supported: file.supported,
+          dataset: file.dataset,
+          byteSize: original?.body.byteLength ?? stored?.archive?.byteLength ?? existing?.byteSize ?? null,
+          objectKey,
+        },
+      });
+    }
+  } catch (error) {
+    await prisma.importBatch.update({ where: { id: batch.id }, data: { status: "failed", finishedAt: new Date() } });
+    throw error;
   }
   for (const error of draft.errors) {
     await prisma.importRowError.create({ data: { batchId: batch.id, fileName: error.file, row: error.row, message: error.message } });
@@ -296,6 +338,7 @@ export async function persistSamsungImport(ctx: AuthContext, draft: SamsungImpor
     keptCorrections: counts.kept,
     errors: draft.errors.length,
     unsupported: draft.unsupported,
+    archiveKey: archiveKey ?? null,
   };
   await prisma.importBatch.update({
     where: { id: batch.id },
@@ -323,14 +366,41 @@ export async function listImports(userId: string) {
     take: 30,
     include: { files: true, errors: true },
   });
-  return batches.map((batch) => ({
+  return batches.map((batch) => presentImport(batch));
+}
+
+export function presentImport(batch: {
+  id: string;
+  status: string;
+  label: string | null;
+  startedAt: Date;
+  finishedAt: Date | null;
+  summary: unknown;
+  progress: unknown;
+  lastError: string | null;
+  byteSize: number | null;
+  attemptCount: number;
+  files: Array<{ name: string; supported: boolean; dataset: string | null; byteSize: number | null; objectKey: string | null }>;
+  errors: Array<{ fileName: string; row: number | null; message: string }>;
+}) {
+  return {
     id: batch.id,
     status: batch.status,
     label: batch.label,
     startedAt: batch.startedAt.toISOString(),
     finishedAt: batch.finishedAt?.toISOString() ?? null,
+    progress: batch.progress,
+    lastError: batch.lastError,
+    byteSize: batch.byteSize,
+    attemptCount: batch.attemptCount,
     summary: batch.summary,
-    files: batch.files.map((file) => ({ name: file.name, supported: file.supported, dataset: file.dataset })),
+    files: batch.files.map((file) => ({
+      name: file.name,
+      supported: file.supported,
+      dataset: file.dataset,
+      byteSize: file.byteSize,
+      objectKey: file.objectKey,
+    })),
     errors: batch.errors.map((error) => ({ file: error.fileName, row: error.row, message: error.message })),
-  }));
+  };
 }

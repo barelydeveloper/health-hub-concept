@@ -21,7 +21,7 @@ A live custom GPT was not created or called. This environment has no ChatGPT or 
 ## Supported clients
 
 1. **Any HTTPS bearer client.** This is the path the local acceptance test used. Create a token in Settings, send it as `Authorization: Bearer`, and send a new `Idempotency-Key` on every write. Reuse that key only to retry the same write.
-2. **GPT Action.** Import `openapi/openapi.yaml` (the companion file is `openapi/gpt-action.json`). This path is documented below and has not been executed against ChatGPT.
+2. **GPT Action.** Import `openapi/gpt-action.yaml` (the companion file is `openapi/gpt-action.json`). ChatGPT allows at most 30 operations, so this file omits health, readiness, token management, and the audit log. The full contract remains `openapi/openapi.yaml`. This path is documented below and has not been executed against ChatGPT.
 3. **`POST /api/mcp`.** A small JSON-RPC subset: `initialize`, `tools/list`, and `tools/call`. It uses the same bearer token and the same services. It is not part of the OpenAPI file.
 
 ## Account setup required before a live GPT Action
@@ -30,7 +30,7 @@ A custom GPT with Actions requires ChatGPT Plus, Team, or Enterprise. A free Cha
 
 1. Deploy this app on public HTTPS. `docker compose up -d` and `npx prisma migrate deploy` prepare Postgres. Set `DATABASE_URL`, `AUTH_EMAIL`, `AUTH_PASSWORD`, and a long random `AUTH_SECRET`.
 2. Sign in and create a token with the scopes that GPT should have. A read-only token cannot write.
-3. In the GPT editor, add an Action and import `openapi/openapi.yaml`. Replace the server URL with the deployed origin. Do not leave `https://example.com`.
+3. In the GPT editor, add an Action and import `openapi/gpt-action.yaml`. Its server URL is `https://health-hub-concept.netlify.app`.
 4. Set authentication to Bearer and paste the `fihub_...` token into the Action secret. ChatGPT sends it as `Authorization: Bearer` only after that Action is saved on the GPT. Ordinary chats do not gain access on their own.
 5. Tell the GPT to send a new `Idempotency-Key` on every write and to reuse it only when retrying that same write.
 

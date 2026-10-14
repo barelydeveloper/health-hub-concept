@@ -1183,7 +1183,58 @@ async function loadZipEntry(entry: Entry, stream: Readable): Promise<LoadedFile>
   return { name, dataset, rows: parsed.rows, errors: parsed.errors };
 }
 
+export const MAX_ZIP_ENTRIES = 2_000;
+export const MAX_ZIP_UNCOMPRESSED_BYTES = 1_000_000_000;
+export const ZIP_TOO_MANY_ENTRIES = "zip has too many entries";
+export const ZIP_UNCOMPRESSED_TOO_LARGE = "zip uncompressed size exceeds the limit";
+
+function findEocd(buffer: Buffer): number {
+  const min = Math.max(0, buffer.length - 22 - 65_535);
+  for (let offset = buffer.length - 22; offset >= min; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  return -1;
+}
+
+/** Read central-directory headers only, before yauzl inflates anything. */
+function zipLimitError(buffer: Buffer): string | null {
+  const eocd = findEocd(buffer);
+  if (eocd < 0 || eocd + 22 > buffer.length) return null;
+  const declared = buffer.readUInt16LE(eocd + 10);
+  if (declared !== 0xffff && declared > MAX_ZIP_ENTRIES) return ZIP_TOO_MANY_ENTRIES;
+  const cdSize = buffer.readUInt32LE(eocd + 12);
+  const cdOffset = buffer.readUInt32LE(eocd + 16);
+  if (cdOffset > buffer.length || cdSize > buffer.length - cdOffset) return null;
+  let offset = cdOffset;
+  const end = cdOffset + cdSize;
+  let count = 0;
+  let uncompressed = 0;
+  while (offset + 46 <= end) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    count += 1;
+    const size = buffer.readUInt32LE(offset + 24);
+    uncompressed += size === 0xffffffff ? MAX_ZIP_UNCOMPRESSED_BYTES + 1 : size;
+    if (count > MAX_ZIP_ENTRIES) return ZIP_TOO_MANY_ENTRIES;
+    if (uncompressed > MAX_ZIP_UNCOMPRESSED_BYTES) return ZIP_UNCOMPRESSED_TOO_LARGE;
+    const nameLen = buffer.readUInt16LE(offset + 28);
+    const extraLen = buffer.readUInt16LE(offset + 30);
+    const commentLen = buffer.readUInt16LE(offset + 32);
+    offset += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
+}
+
 export function parseSamsungZip(buffer: Buffer): Promise<SamsungImportDraft> {
+  const limit = zipLimitError(buffer);
+  if (limit) {
+    const draft = emptyDraft();
+    draft.errors.push({ file: "", row: null, message: limit });
+    return Promise.resolve(draft);
+  }
+  return parseSamsungZipEntries(buffer);
+}
+
+function parseSamsungZipEntries(buffer: Buffer): Promise<SamsungImportDraft> {
   return new Promise((resolve) => {
     // decodeStrings is off so yauzl does not abort the archive on a ".." entry name.
     yauzl.fromBuffer(buffer, { lazyEntries: true, decodeStrings: false }, (err, zip) => {
@@ -1196,6 +1247,8 @@ export function parseSamsungZip(buffer: Buffer): Promise<SamsungImportDraft> {
       const loaded: LoadedFile[] = [];
       const extraErrors: ImportError[] = [];
       let settled = false;
+      let entryCount = 0;
+      let uncompressedBytes = 0;
       const finish = () => {
         if (settled) return;
         settled = true;
@@ -1219,6 +1272,8 @@ export function parseSamsungZip(buffer: Buffer): Promise<SamsungImportDraft> {
         const message = zipErr.message ?? "";
         if (message.includes("..") || /invalid relative path|absolute path/i.test(message)) {
           extraErrors.push({ file: "unsafe", row: null, message: "rejected unsafe path" });
+        } else if (/size mismatch/i.test(message) && [...message.matchAll(/\d+/g)].some((match) => Number(match[0]) > MAX_ZIP_UNCOMPRESSED_BYTES)) {
+          extraErrors.push({ file: "", row: null, message: ZIP_UNCOMPRESSED_TOO_LARGE });
         } else {
           extraErrors.push({ file: "", row: null, message: message });
         }
@@ -1234,6 +1289,18 @@ export function parseSamsungZip(buffer: Buffer): Promise<SamsungImportDraft> {
         }
         if (name.endsWith("/")) {
           next();
+          return;
+        }
+        entryCount += 1;
+        uncompressedBytes += Number(entry.uncompressedSize) || 0;
+        if (entryCount > MAX_ZIP_ENTRIES || uncompressedBytes > MAX_ZIP_UNCOMPRESSED_BYTES) {
+          extraErrors.push({
+            file: "",
+            row: null,
+            message: entryCount > MAX_ZIP_ENTRIES ? ZIP_TOO_MANY_ENTRIES : ZIP_UNCOMPRESSED_TOO_LARGE,
+          });
+          loaded.length = 0;
+          finish();
           return;
         }
         zip.openReadStream(entry, (streamErr, stream) => {

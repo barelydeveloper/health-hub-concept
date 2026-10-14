@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 enum ValueOrigin {
@@ -99,6 +100,7 @@ enum GoalStatus {
 
 enum ImportStatus {
   pending
+  queued
   running
   completed
   completed_with_errors
@@ -223,12 +225,20 @@ model ImportBatch {
   summary      Json?
   startedAt    DateTime     @default(now()) @map("started_at")
   finishedAt   DateTime?    @map("finished_at")
+  objectKey    String?      @map("object_key")
+  byteSize     Int?         @map("byte_size")
+  contentHash  String?      @map("content_hash")
+  attemptCount Int          @default(0) @map("attempt_count")
+  lockedAt     DateTime?    @map("locked_at")
+  lastError    String?      @map("last_error")
+  progress     Json?
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   files        ImportFile[]
   errors       ImportRowError[]
   payloads     SourcePayload[]
 
   @@index([userId, startedAt])
+  @@index([status, lockedAt])
   @@map("import_batches")
 }
 
@@ -240,6 +250,7 @@ model ImportFile {
   dataset        String?
   byteSize       Int?        @map("byte_size")
   contentHash    String?     @map("content_hash")
+  objectKey      String?     @map("object_key")
   recordsRead    Int         @default(0) @map("records_read")
   recordsAccepted Int        @default(0) @map("records_accepted")
   batch          ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)

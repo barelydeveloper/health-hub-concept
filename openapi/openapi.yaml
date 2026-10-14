@@ -7,7 +7,7 @@ info:
     Browser sessions use the httpOnly fi_session cookie. External clients send Authorization Bearer.
     Hydration-adjusted values and forecasts are estimates, not guaranteed outcomes.
 servers:
-  - url: https://example.com
+  - url: https://health-hub-concept.netlify.app
     description: Replace with the deployed HTTPS origin.
 security:
   - bearerAuth: []
@@ -276,7 +276,8 @@ paths:
       responses:
         "200": { description: Batches }
     post:
-      summary: Import Samsung Health CSV JSON or a ZIP archive
+      summary: Import Samsung Health CSV JSON or a ZIP archive of 4 MB or less
+      description: Larger ZIP files return 413 and use POST /api/v1/imports/uploads.
       parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
       requestBody:
         required: true
@@ -289,6 +290,39 @@ paths:
             schema: { type: string, format: binary }
       responses:
         "201": { description: Added, skipped, revised, and error counts }
+        "413": { description: ZIP is over 4 MB. Use the direct upload routes. }
+  /api/v1/imports/uploads:
+    post:
+      summary: Start a direct ZIP upload up to 256 MB
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, byteSize]
+              properties:
+                filename: { type: string }
+                byteSize: { type: integer, minimum: 1, maximum: 268435456 }
+      responses:
+        "201": { description: Owned batch and a short-lived signed PUT URL }
+  /api/v1/imports/uploads/{id}/complete:
+    post:
+      summary: Queue a finished direct upload after checking size and ZIP magic bytes
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      responses:
+        "202": { description: Batch queued for background processing }
+  /api/v1/imports/{id}:
+    get:
+      summary: Import batch status, progress, and final counts
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200": { description: Batch status }
+        "404": { description: Not found for this user }
   /api/v1/recovery:
     get:
       summary: Sleep and activity logs

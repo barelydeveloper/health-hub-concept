@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { planImportMerge } from "../merge";
 import { UNSUPPORTED_ADAPTERS, selectAdapter } from "../registry";
 import { activityStoredFields, hasStoredActivity, hasStoredNutrition, nutritionStoredFields, scaleImportedNumber } from "../scale";
-import { KG_TO_LB, M_TO_MI, MS_TO_MPH, parseSamsungCsv, parseSamsungFiles, parseSamsungZip } from "./parse";
+import { KG_TO_LB, M_TO_MI, MS_TO_MPH, MAX_ZIP_UNCOMPRESSED_BYTES, ZIP_TOO_MANY_ENTRIES, ZIP_UNCOMPRESSED_TOO_LARGE, parseSamsungCsv, parseSamsungFiles, parseSamsungZip } from "./parse";
 
 const fixtureDir = path.resolve(process.cwd(), "fixtures/samsung");
 
@@ -27,13 +27,14 @@ function u32(value: number): Buffer {
 }
 
 /** Minimal uncompressed ZIP. Entry names are stored as written, including unsafe paths. */
-function zipStored(entries: { name: string; data: Buffer }[]): Buffer {
+function zipStored(entries: { name: string; data: Buffer; uncompressedSize?: number }[]): Buffer {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
   for (const entry of entries) {
     const name = Buffer.from(entry.name, "utf8");
     const crc = crc32(entry.data);
+    const uncompressed = entry.uncompressedSize ?? entry.data.length;
     const local = Buffer.concat([
       u32(0x04034b50),
       u16(20),
@@ -43,7 +44,7 @@ function zipStored(entries: { name: string; data: Buffer }[]): Buffer {
       u16(0),
       u32(crc),
       u32(entry.data.length),
-      u32(entry.data.length),
+      u32(uncompressed),
       u16(name.length),
       u16(0),
       name,
@@ -59,7 +60,7 @@ function zipStored(entries: { name: string; data: Buffer }[]): Buffer {
       u16(0),
       u32(crc),
       u32(entry.data.length),
-      u32(entry.data.length),
+      u32(uncompressed),
       u16(name.length),
       u16(0),
       u16(0),
@@ -247,6 +248,28 @@ describe("samsung zip", () => {
     expect(serialized).not.toContain("../evil.csv");
     expect(draft.discovered.some((file) => file.name.includes(".."))).toBe(false);
     expect(draft.unsupported.some((name) => name.includes(".."))).toBe(false);
+  });
+
+  it("rejects an archive with more than 2000 entries before inflating", async () => {
+    const archive = zipStored(Array.from({ length: 2001 }, (_, index) => ({
+      name: `notes/file-${index}.txt`,
+      data: Buffer.from("x"),
+    })));
+    const draft = await parseSamsungZip(archive);
+    expect(draft.errors.some((error) => error.message === ZIP_TOO_MANY_ENTRIES)).toBe(true);
+    expect(draft.days).toEqual([]);
+    expect(draft.discovered).toEqual([]);
+  });
+
+  it("rejects an uncompressed-size bomb before inflating", async () => {
+    const archive = zipStored([{
+      name: "com.samsung.health.weight.csv",
+      data: Buffer.from("x"),
+      uncompressedSize: MAX_ZIP_UNCOMPRESSED_BYTES + 1,
+    }]);
+    const draft = await parseSamsungZip(archive);
+    expect(draft.errors.some((error) => error.message === ZIP_UNCOMPRESSED_TOO_LARGE)).toBe(true);
+    expect(draft.days).toEqual([]);
   });
 });
 

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseSamsungFiles, parseSamsungZip } from "@/domain/import";
+import { zipNeedsDirectUpload } from "@/lib/import-limits";
 import { compareExercise, muscleExposure, overloadSuggestion, personalRecords, trainingFrequency } from "@/domain/strength/calculate";
 import type { SetInput } from "@/domain/strength/types";
 import { clearSessionCookie, generateApiToken, sessionCookie, signSession, verifyPassword } from "../auth";
@@ -11,6 +12,7 @@ import { bodyTrends, correctMeasurement, createMeasurement, deleteMeasurement, l
 import { dashboard, recovery } from "../services/dashboard";
 import { createGoal, forecastReport, listGoals, saveForecast } from "../services/goals";
 import { listImports, persistSamsungImport } from "../services/imports";
+import { getAsset } from "../storage";
 import { createNutrition, listNutrition } from "../services/nutrition";
 import { addSets, correctSet, createWorkout, getWorkout, loadSessions, patchWorkout, removeSet, serializeSession, toSessionInput } from "../services/workouts";
 import {
@@ -335,14 +337,39 @@ export async function postForecast(req: Request): Promise<Response> {
 }
 
 export async function getImports(req: Request): Promise<Response> {
-  return withAuth(req, "read", async (ctx) => json({ data: await listImports(ctx.userId) }));
+  return withAuth(req, "read", async (ctx) => {
+    const objectKey = new URL(req.url).searchParams.get("object");
+    if (objectKey) {
+      const owned = await prisma.importFile.findFirst({
+        where: { objectKey, batch: { userId: ctx.userId } },
+        select: { name: true },
+      });
+      if (!owned) return apiError(404, "not_found", "Stored import file was not found.");
+      const bytes = await getAsset(objectKey);
+      const filename = owned.name.replace(/["\r\n]/g, "");
+      return new Response(Buffer.from(bytes), {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": `attachment; filename="${filename}"`,
+        },
+      });
+    }
+    return json({ data: await listImports(ctx.userId) });
+  });
 }
 
 export async function postImport(req: Request): Promise<Response> {
   const contentType = req.headers.get("content-type") ?? "";
   if (contentType.includes("application/zip") || contentType.includes("application/octet-stream")) {
     return withAuth(req, "import", async (ctx) => {
+      const declared = Number(req.headers.get("content-length"));
+      if (zipNeedsDirectUpload(declared)) {
+        return apiError(413, "payload_too_large", "ZIP files over 4 MB must use POST /api/v1/imports/uploads.");
+      }
       const bytes = Buffer.from(await req.arrayBuffer());
+      if (zipNeedsDirectUpload(bytes.byteLength)) {
+        return apiError(413, "payload_too_large", "ZIP files over 4 MB must use POST /api/v1/imports/uploads.");
+      }
       const { beginIdempotency, finishIdempotency, releaseIdempotency } = await import("../idempotency");
       const claim = await beginIdempotency({
         userId: ctx.userId,
@@ -355,7 +382,7 @@ export async function postImport(req: Request): Promise<Response> {
       if ("replay" in claim && claim.replay) return claim.replay;
       try {
         const draft = await parseSamsungZip(bytes);
-        const result = await persistSamsungImport(ctx, draft);
+        const result = await persistSamsungImport(ctx, draft, undefined, { archive: bytes });
         return finishIdempotency(ctx.userId, claim.key, json({ data: result }, 201));
       } catch (error) {
         console.error(error);
@@ -373,7 +400,12 @@ export async function postImport(req: Request): Promise<Response> {
       bytes: file.base64 ? Buffer.from(file.base64, "base64") : undefined,
     }));
     const draft = await parseSamsungFiles(files);
-    return json({ data: await persistSamsungImport(ctx, draft, parsed.data.label) }, 201);
+    const stored = files.map((file) => ({
+      name: file.name,
+      body: file.bytes ?? Buffer.from(file.text ?? "", "utf8"),
+      contentType: file.name.toLowerCase().endsWith(".json") ? "application/json" : "text/csv",
+    }));
+    return json({ data: await persistSamsungImport(ctx, draft, parsed.data.label, { files: stored }) }, 201);
   });
 }
 

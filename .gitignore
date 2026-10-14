@@ -153,3 +153,7 @@ data/
 test-results/
 playwright-report/
 blob-report/
+.neon
+
+# Local Netlify folder
+.netlify
